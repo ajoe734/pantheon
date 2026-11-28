@@ -46,7 +46,6 @@ Environment variables consumed by the reconciler:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from copy import deepcopy
 import hashlib
 import importlib
@@ -818,20 +817,7 @@ class PaperFleetReconciler:
         self._fence_token = 0
         self._lease_expires_at_ms = 0
 
-        # Short state lock for in-memory reconciler state and local monitoring-session
-        # persistence. Network I/O and subprocess waits execute outside self._lock and
-        # apply their resulting state transitions atomically under self._lock so state
-        # readers (snapshot(), /readyz, /healthz, /api/fleet/state) never wait on cycle
-        # I/O and always observe a consistent worker/monitoring-session view.
         self._lock = threading.RLock()
-        # Dedicated cycle lock serializing reconcile_once() and stop() worker teardown
-        # so concurrent reconcile cycles cannot concurrently mutate worker state.
-        self._cycle_lock = threading.RLock()
-        self._defer_snapshot_publish_depth = 0
-        self._snapshot_publish_deferred = False
-        self._pending_stale_session_closures: Dict[
-            str, List[Tuple[str, str, Dict[str, Any], bool]]
-        ] = {}
         self._safe_mode_skip_logged: set[tuple[str, str]] = set()
         self._workers: Dict[str, WorkerEntry] = {}
         self._monitoring_sessions: Dict[str, Dict[str, Any]] = {}
@@ -872,20 +858,17 @@ class PaperFleetReconciler:
                 self._last_error = "durable fenced leader store is not configured"
                 self._publish_snapshot()
                 return False
-            current_token = self._fence_token
-        try:
-            lease = store.acquire_or_renew(
-                self._reconciler_id,
-                current_token,
-                self._leader_lease_ttl,
-            )
-        except Exception as exc:  # noqa: BLE001 - lease failure must fail closed
-            with self._lock:
+            try:
+                lease = store.acquire_or_renew(
+                    self._reconciler_id,
+                    self._fence_token,
+                    self._leader_lease_ttl,
+                )
+            except Exception as exc:  # noqa: BLE001 - lease failure must fail closed
                 self._is_leader = False
                 self._last_error = f"leader lease unavailable: {type(exc).__name__}: {exc}"
                 self._publish_snapshot()
-            return False
-        with self._lock:
+                return False
             self._is_leader = bool(lease.acquired)
             if self._is_leader:
                 self._fence_token = int(lease.token)
@@ -894,14 +877,11 @@ class PaperFleetReconciler:
             return self._is_leader
 
     def _has_current_fence(self) -> bool:
-        with self._lock:
-            store = self._leader_store
-            is_leader = self._is_leader
-            fence_token = self._fence_token
-        if store is None or not is_leader or fence_token <= 0:
+        store = self._leader_store
+        if store is None or not self._is_leader or self._fence_token <= 0:
             return False
         try:
-            return bool(store.validate(self._reconciler_id, fence_token))
+            return bool(store.validate(self._reconciler_id, self._fence_token))
         except Exception:  # noqa: BLE001 - any ambiguity fails closed
             return False
 
@@ -912,14 +892,13 @@ class PaperFleetReconciler:
     def _demote_and_stop_workers(self) -> None:
         with self._lock:
             self._is_leader = False
-            binding_ids = list(self._workers)
-        for binding_id in binding_ids:
-            self._terminate_worker(
-                binding_id,
-                reason="reconciler lost fenced leader lease",
-                enforce_fence=False,
-            )
-        self._publish_snapshot()
+            for binding_id in list(self._workers):
+                self._terminate_worker(
+                    binding_id,
+                    reason="reconciler lost fenced leader lease",
+                    enforce_fence=False,
+                )
+            self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Loop 9 controller truth (leader only)
@@ -968,9 +947,7 @@ class PaperFleetReconciler:
     ) -> None:
         """Leader-only, throttled controller write; never raises."""
         writer = self._loop_writer
-        with self._lock:
-            is_leader = self._is_leader
-        if writer is None or not is_leader:
+        if writer is None or not self._is_leader:
             return
         now = time.monotonic()
         last = self._loop_last_write_monotonic
@@ -979,14 +956,13 @@ class PaperFleetReconciler:
         try:
             with self._lock:
                 workers = self._snapshot()["workers"] if desired is not None else []
-                cycle_count = self._cycle_count + 1
             truth = build_loop_truth(
                 desired_binding_ids=(
                     sorted(desired) if desired is not None else None
                 ),
                 workers=workers,
                 reconciler_id=self._reconciler_id,
-                cycle_count=cycle_count,
+                cycle_count=self._cycle_count + 1,
                 checked_at=_iso_now(),
             )
             if desired is None:
@@ -1024,28 +1000,23 @@ class PaperFleetReconciler:
         self._shutdown.set()
         if self._reconcile_thread is not None:
             self._reconcile_thread.join(timeout=max(self._drain_timeout, 5.0))
-        with self._cycle_lock:
-            with self._lock:
-                binding_ids = list(self._workers)
-            for binding_id in binding_ids:
+        with self._lock:
+            for binding_id in list(self._workers):
                 self._terminate_worker(
                     binding_id,
                     reason="reconciler shutdown",
                     enforce_fence=False,
                 )
-            with self._lock:
-                store = self._leader_store
-                fence_token = self._fence_token
-                self._is_leader = False
-                self._publish_snapshot()
-            if store is not None and fence_token > 0:
+            if self._leader_store is not None and self._fence_token > 0:
                 try:
-                    store.release(
+                    self._leader_store.release(
                         self._reconciler_id,
-                        fence_token,
+                        self._fence_token,
                     )
                 except Exception:  # noqa: BLE001 - expiry remains the failover path
                     pass
+            self._is_leader = False
+            self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Reconcile
@@ -1059,232 +1030,221 @@ class PaperFleetReconciler:
             self._publish_snapshot()
 
     def _reconcile_once(self, leader_store: Any | None = None) -> Dict[str, Any]:
-        with self._cycle_lock:
-            if not self.try_acquire_lease(leader_store):
-                log.info("reconciler %s is follower; skipping worker spawn cycle", self._reconciler_id)
-                self._demote_and_stop_workers()
-                return self.snapshot()
+        if not self.try_acquire_lease(leader_store):
+            log.info("reconciler %s is follower; skipping worker spawn cycle", self._reconciler_id)
+            self._demote_and_stop_workers()
+            return self.snapshot()
 
-            fleet = self._fetch_fleet_state()
-            if fleet is None:
-                with self._lock:
-                    failure_reason = self._last_error
-                self._publish_loop_truth(None, failure_reason=failure_reason)
-            # fleet is None when the fetch failed — must not evict existing workers
-            # in that case, since we have no reliable picture of desired state.
-            bindings = list(fleet[0]) if fleet is not None else None
-            excluded_ids = set(fleet[1]) if fleet is not None and len(fleet) > 1 else set()
-            raw_excluded = list(fleet[2]) if fleet is not None and len(fleet) > 2 else []
+        fleet = self._fetch_fleet_state()
+        if fleet is None:
+            self._publish_loop_truth(None, failure_reason=self._last_error)
+        # fleet is None when the fetch failed — must not evict existing workers
+        # in that case, since we have no reliable picture of desired state.
+        bindings = fleet[0] if fleet is not None else None
+        excluded_ids = set(fleet[1]) if fleet is not None and len(fleet) > 1 else set()
+        raw_excluded = list(fleet[2]) if fleet is not None and len(fleet) > 2 else []
 
-            runtime_summaries = (
-                self._fetch_runtime_summaries()
-                if bindings is not None
-                else None
-            )
-            if not self._has_current_fence():
-                self._demote_and_stop_workers()
-                return self.snapshot()
+        runtime_summaries = (
+            self._fetch_runtime_summaries()
+            if bindings is not None
+            else None
+        )
+        if not self._has_current_fence():
+            self._demote_and_stop_workers()
+            return self.snapshot()
 
-            with self._atomic_snapshot_transition(publish_on_exit=False):
-                # Poll live processes for exit — always run, even on fetch failure
-                for binding_id, entry in list(self._workers.items()):
-                    if entry.process is None or entry.status in ("stopped", "dead"):
-                        continue
-                    rc = entry.process.poll()
-                    if rc is not None:
-                        entry.last_exit_code = rc
-                        entry.status = "dead"
-                        entry.dead_at = time.monotonic()
-                        # Free the port so the restart can allocate a clean one
-                        self._free_port(entry.port)
-                        entry.port = 0
-                        self._end_monitoring_session(
-                            entry.monitoring_session_id,
-                            reason="worker_exit",
-                        )
-                        log.warning(
-                            "worker for binding %s exited with code %d (restarts=%d)",
-                            binding_id,
-                            rc,
-                            entry.restart_count,
-                        )
-                if bindings is None:
-                    self._cycle_count += 1
-                    self._last_reconcile_at = _iso_now()
+        with self._lock:
+            # Poll live processes for exit — always run, even on fetch failure
+            for binding_id, entry in list(self._workers.items()):
+                if entry.process is None or entry.status in ("stopped", "dead"):
+                    continue
+                rc = entry.process.poll()
+                if rc is not None:
+                    entry.last_exit_code = rc
+                    entry.status = "dead"
+                    entry.dead_at = time.monotonic()
+                    # Free the port so the restart can allocate a clean one
+                    self._free_port(entry.port)
+                    entry.port = 0
                     self._publish_snapshot()
-                    return self._snapshot()
-
-            unadmitted_grace_binding_ids: set[str] = set()
-            # 1. Admission defense on active bindings (SD-PAPER-01 §7.2)
-            for binding in list(bindings):
-                binding_id = str(binding.get("binding_id") or "")
-                decision = self._check_market_admission(binding)
-                if decision is not None and not decision.admitted:
-                    is_within_grace = False
-                    effective_at_str = (
-                        binding.get("effective_at")
-                        or (binding.get("metadata") or {}).get("effective_at")
-                        or binding.get("created_at")
+                    self._end_monitoring_session(
+                        entry.monitoring_session_id,
+                        reason="worker_exit",
                     )
-                    if self._market_input_bootstrap_grace_seconds > 0 and effective_at_str:
-                        eff_dt, eff_err = _admission_parse_rfc3339(effective_at_str, field_name="effective_at")
-                        if not eff_err and eff_dt is not None:
-                            now_dt = datetime.now(timezone.utc)
-                            age_since_effective = (now_dt - eff_dt).total_seconds()
-                            if 0 <= age_since_effective < self._market_input_bootstrap_grace_seconds:
-                                is_within_grace = True
+                    log.warning(
+                        "worker for binding %s exited with code %d (restarts=%d)",
+                        binding_id,
+                        rc,
+                        entry.restart_count,
+                    )
 
-                    if is_within_grace:
-                        log.info(
-                            "deferring pause for binding %s: within market bootstrap grace period (%.1fs < %.1fs) for %s (%s)",
+            if bindings is not None:
+                unadmitted_grace_binding_ids: set[str] = set()
+                # 1. Admission defense on active bindings (SD-PAPER-01 §7.2)
+                for binding in list(bindings):
+                    binding_id = str(binding.get("binding_id") or "")
+                    decision = self._check_market_admission(binding)
+                    if decision is not None and not decision.admitted:
+                        is_within_grace = False
+                        effective_at_str = (
+                            binding.get("effective_at")
+                            or (binding.get("metadata") or {}).get("effective_at")
+                            or binding.get("created_at")
+                        )
+                        if self._market_input_bootstrap_grace_seconds > 0 and effective_at_str:
+                            eff_dt, eff_err = _admission_parse_rfc3339(effective_at_str, field_name="effective_at")
+                            if not eff_err and eff_dt is not None:
+                                now_dt = datetime.now(timezone.utc)
+                                age_since_effective = (now_dt - eff_dt).total_seconds()
+                                if 0 <= age_since_effective < self._market_input_bootstrap_grace_seconds:
+                                    is_within_grace = True
+
+                        if is_within_grace:
+                            log.info(
+                                "deferring pause for binding %s: within market bootstrap grace period (%.1fs < %.1fs) for %s (%s)",
+                                binding_id,
+                                age_since_effective,
+                                self._market_input_bootstrap_grace_seconds,
+                                decision.reason_code,
+                                decision.detail,
+                            )
+                            unadmitted_grace_binding_ids.add(binding_id)
+                            if binding_id in self._workers:
+                                self._terminate_worker(
+                                    binding_id,
+                                    reason=f"worker deferred pending market admission: {decision.reason_code}",
+                                )
+                            continue
+
+                        log.warning(
+                            "pausing active binding %s due to market admission rejection (%s: %s)",
                             binding_id,
-                            age_since_effective,
-                            self._market_input_bootstrap_grace_seconds,
                             decision.reason_code,
                             decision.detail,
                         )
-                        unadmitted_grace_binding_ids.add(binding_id)
-                        with self._lock:
-                            has_worker = binding_id in self._workers
-                        if has_worker:
-                            self._terminate_worker(
-                                binding_id,
-                                reason=f"worker deferred pending market admission: {decision.reason_code}",
-                            )
-                        continue
-
-                    log.warning(
-                        "pausing active binding %s due to market admission rejection (%s: %s)",
-                        binding_id,
-                        decision.reason_code,
-                        decision.detail,
-                    )
-                    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
-                    policy = binding.get("market_data_policy") or metadata.get("market_data_policy") or {}
-                    max_age = int(
-                        policy.get("max_age_seconds")
-                        or self._performance_mark_max_age_seconds
-                        or 86400
-                    )
-                    pause_cmd_ref = f"cmd-stale-pause-{binding_id}-{uuid.uuid4().hex[:8]}"
-                    stale_patch = {
-                        "session_admission": {
-                            "reason_code": decision.reason_code or "market_input_stale",
-                            "source_snapshot_id": decision.snapshot_id,
-                            "source_event_time": decision.event_time,
-                            "observed_at": _iso_now(),
-                            "max_age_seconds": max_age,
-                            "pause_command_ref": pause_cmd_ref,
-                            "resume_snapshot_id": None,
-                            "resumed_at": None,
+                        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+                        policy = binding.get("market_data_policy") or metadata.get("market_data_policy") or {}
+                        max_age = int(
+                            policy.get("max_age_seconds")
+                            or self._performance_mark_max_age_seconds
+                            or 86400
+                        )
+                        pause_cmd_ref = f"cmd-stale-pause-{binding_id}-{uuid.uuid4().hex[:8]}"
+                        stale_patch = {
+                            "session_admission": {
+                                "reason_code": decision.reason_code or "market_input_stale",
+                                "source_snapshot_id": decision.snapshot_id,
+                                "source_event_time": decision.event_time,
+                                "observed_at": _iso_now(),
+                                "max_age_seconds": max_age,
+                                "pause_command_ref": pause_cmd_ref,
+                                "resume_snapshot_id": None,
+                                "resumed_at": None,
+                            }
                         }
-                    }
-                    # active -> pending_pause -> paused
-                    self._transition_binding(binding_id, "pending_pause", metadata_patch=stale_patch)
-                    self._transition_binding(binding_id, "paused", metadata_patch=stale_patch)
-                    self._terminate_worker(binding_id, reason=f"paused due to {decision.reason_code}")
-                    bindings.remove(binding)
-                    excluded_ids.add(binding_id)
-                    binding["status"] = "paused"
-                    binding.setdefault("metadata", {})["session_admission"] = stale_patch["session_admission"]
-                    raw_excluded.append(binding)
+                        # active -> pending_pause -> paused
+                        self._transition_binding(binding_id, "pending_pause", metadata_patch=stale_patch)
+                        self._transition_binding(binding_id, "paused", metadata_patch=stale_patch)
+                        self._terminate_worker(binding_id, reason=f"paused due to {decision.reason_code}")
+                        bindings.remove(binding)
+                        excluded_ids.add(binding_id)
+                        binding["status"] = "paused"
+                        binding.setdefault("metadata", {})["session_admission"] = stale_patch["session_admission"]
+                        raw_excluded.append(binding)
 
-            # 2. Resume defense on paused bindings (SD-PAPER-01 §7.3)
-            for eb in list(raw_excluded):
-                if isinstance(eb, dict) and eb.get("status") == "paused":
-                    binding_id = str(eb.get("binding_id") or "")
-                    metadata = eb.get("metadata") if isinstance(eb.get("metadata"), dict) else {}
-                    session_adm = metadata.get("session_admission")
-                    # Auto-resume any reconciler-driven admission pause (market_input_* —
-                    # covers both an existing snapshot going stale and no snapshot ever
-                    # having been admitted, e.g. market_input_missing on a never-provisioned
-                    # connector) — never auto-resume operator pauses, which use a distinct
-                    # non-"market_input_" reason_code (operator_requested_pause).
-                    pause_reason = str(session_adm.get("reason_code") or "") if isinstance(session_adm, dict) else ""
-                    if isinstance(session_adm, dict) and pause_reason.startswith("market_input_"):
-                        pool_safe_mode = str(eb.get("safe_mode") or "")
-                        if pool_safe_mode and pool_safe_mode not in _RESUME_ALLOWED_SAFE_MODES:
-                            # runtime-manager would answer 409; do not ask.
-                            skip_key = (binding_id, pool_safe_mode)
-                            with self._lock:
-                                should_log_skip = skip_key not in self._safe_mode_skip_logged
-                                if should_log_skip:
+                # 2. Resume defense on paused bindings (SD-PAPER-01 §7.3)
+                for eb in list(raw_excluded):
+                    if isinstance(eb, dict) and eb.get("status") == "paused":
+                        binding_id = str(eb.get("binding_id") or "")
+                        metadata = eb.get("metadata") if isinstance(eb.get("metadata"), dict) else {}
+                        session_adm = metadata.get("session_admission")
+                        # Auto-resume any reconciler-driven admission pause (market_input_* —
+                        # covers both an existing snapshot going stale and no snapshot ever
+                        # having been admitted, e.g. market_input_missing on a never-provisioned
+                        # connector) — never auto-resume operator pauses, which use a distinct
+                        # non-"market_input_" reason_code (operator_requested_pause).
+                        pause_reason = str(session_adm.get("reason_code") or "") if isinstance(session_adm, dict) else ""
+                        if isinstance(session_adm, dict) and pause_reason.startswith("market_input_"):
+                            pool_safe_mode = str(eb.get("safe_mode") or "")
+                            if pool_safe_mode and pool_safe_mode not in _RESUME_ALLOWED_SAFE_MODES:
+                                # runtime-manager would answer 409; do not ask.
+                                skip_key = (binding_id, pool_safe_mode)
+                                if skip_key not in self._safe_mode_skip_logged:
                                     self._safe_mode_skip_logged.add(skip_key)
-                            if should_log_skip:
-                                log.info(
-                                    "skipping resume of paused binding %s: pool safe_mode=%s blocks activation",
-                                    binding_id,
-                                    pool_safe_mode,
-                                )
-                            continue
-                        paused_snap_id = session_adm.get("source_snapshot_id")
-                        paused_time_str = session_adm.get("source_event_time")
-                        self._last_resolve_unavailable = False
-                        resume_snapshot = self._resolve_market_snapshot(eb)
-                        if self._last_resolve_unavailable:
-                            # Never resume on an unavailable read.
-                            continue
-                        decision = self._check_market_admission(eb, snapshot=resume_snapshot)
-                        if decision is not None and decision.admitted:
-                            paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
-                            new_dt, _ = _admission_parse_rfc3339(decision.event_time, field_name="new_event_time")
-                            is_different_snap = (decision.snapshot_id != paused_snap_id) if (decision.snapshot_id and paused_snap_id) else True
-                            # No prior admitted event_time (e.g. paused for
-                            # market_input_missing, which never recorded one) means
-                            # there is nothing stale to compare against — any freshly
-                            # admitted snapshot is unambiguously newer than "no data".
-                            is_later_time = (new_dt > paused_dt) if new_dt and paused_dt else bool(new_dt) and paused_dt is None
+                                    log.info(
+                                        "skipping resume of paused binding %s: pool safe_mode=%s blocks activation",
+                                        binding_id,
+                                        pool_safe_mode,
+                                    )
+                                continue
+                            paused_snap_id = session_adm.get("source_snapshot_id")
+                            paused_time_str = session_adm.get("source_event_time")
+                            self._last_resolve_unavailable = False
+                            resume_snapshot = self._resolve_market_snapshot(eb)
+                            if self._last_resolve_unavailable:
+                                # Never resume on an unavailable read.
+                                continue
+                            decision = self._check_market_admission(eb, snapshot=resume_snapshot)
+                            if decision is not None and decision.admitted:
+                                paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
+                                new_dt, _ = _admission_parse_rfc3339(decision.event_time, field_name="new_event_time")
+                                is_different_snap = (decision.snapshot_id != paused_snap_id) if (decision.snapshot_id and paused_snap_id) else True
+                                # No prior admitted event_time (e.g. paused for
+                                # market_input_missing, which never recorded one) means
+                                # there is nothing stale to compare against — any freshly
+                                # admitted snapshot is unambiguously newer than "no data".
+                                is_later_time = (new_dt > paused_dt) if new_dt and paused_dt else bool(new_dt) and paused_dt is None
 
-                            # Official calendar correction: the same event_time may
-                            # resume only a distinct snapshot whose governed calendar
-                            # post-dates the automatic stale pause (never older data).
-                            is_calendar_correction = bool(
-                                new_dt
-                                and paused_dt
-                                and new_dt == paused_dt
-                                and _is_official_calendar_correction(session_adm, resume_snapshot)
-                            )
-
-                            if is_different_snap and (is_later_time or is_calendar_correction):
-                                log.info(
-                                    "resuming paused binding %s: new admitted snapshot %s (event_time=%s > %s)",
-                                    binding_id,
-                                    decision.snapshot_id,
-                                    decision.event_time,
-                                    paused_time_str,
+                                # Official calendar correction: the same event_time may
+                                # resume only a distinct snapshot whose governed calendar
+                                # post-dates the automatic stale pause (never older data).
+                                is_calendar_correction = bool(
+                                    new_dt
+                                    and paused_dt
+                                    and new_dt == paused_dt
+                                    and _is_official_calendar_correction(session_adm, resume_snapshot)
                                 )
-                                resume_patch = {
-                                    "session_admission": {
-                                        "resume_snapshot_id": decision.snapshot_id,
-                                        "resumed_at": _iso_now(),
+
+                                if is_different_snap and (is_later_time or is_calendar_correction):
+                                    log.info(
+                                        "resuming paused binding %s: new admitted snapshot %s (event_time=%s > %s)",
+                                        binding_id,
+                                        decision.snapshot_id,
+                                        decision.event_time,
+                                        paused_time_str,
+                                    )
+                                    resume_patch = {
+                                        "session_admission": {
+                                            "resume_snapshot_id": decision.snapshot_id,
+                                            "resumed_at": _iso_now(),
+                                        }
                                     }
-                                }
-                                # paused -> active
-                                if self._transition_binding(binding_id, "active", metadata_patch=resume_patch):
-                                    eb["status"] = "active"
-                                    eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
-                                    if binding_id in excluded_ids:
-                                        excluded_ids.remove(binding_id)
-                                    bindings.append(eb)
-                                    raw_excluded.remove(eb)
+                                    # paused -> active
+                                    if self._transition_binding(binding_id, "active", metadata_patch=resume_patch):
+                                        eb["status"] = "active"
+                                        eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
+                                        if binding_id in excluded_ids:
+                                            excluded_ids.remove(binding_id)
+                                        bindings.append(eb)
+                                        raw_excluded.remove(eb)
 
-            desired: Dict[str, Dict[str, Any]] = {
-                b["binding_id"]: b for b in bindings
-            }
-            self._reap_stale_monitoring_sessions(runtime_summaries)
+                desired: Dict[str, Dict[str, Any]] = {
+                    b["binding_id"]: b for b in bindings
+                }
+                self._reap_stale_monitoring_sessions(runtime_summaries)
 
-            # Start workers for new or dead-but-desired active bindings
-            for binding_id, binding in desired.items():
-                if binding_id in unadmitted_grace_binding_ids:
-                    continue
-                with self._lock:
-                    entry = self._workers.get(binding_id)
-                    is_missing = entry is None
-                    is_dead = entry is not None and entry.status == "dead"
-                    effective_restarts = 0
-                    ready_to_restart = False
-                    cap_reached = False
-                    if is_dead and entry is not None:
+                # Start workers for new or dead-but-desired active bindings
+                for binding_id, binding in desired.items():
+                    if binding_id in unadmitted_grace_binding_ids:
+                        continue
+                    if binding_id not in self._workers:
+                        if not self._start_worker(binding):
+                            self._demote_and_stop_workers()
+                            self._cycle_count += 1
+                            self._last_reconcile_at = _iso_now()
+                            return self._snapshot()
+                    elif self._workers[binding_id].status == "dead":
+                        entry = self._workers[binding_id]
                         # SIGKILL (exit 137) signals an infrastructure disruption
                         # such as OOM or a compose recreate that killed workers
                         # while the reconciler kept running.  Do not count these
@@ -1294,74 +1254,54 @@ class PaperFleetReconciler:
                         effective_restarts = 0 if is_sigkill else entry.restart_count
                         if effective_restarts < self._max_restarts:
                             backoff = effective_restarts * self._restart_backoff
-                            ready_to_restart = (
+                            ready = (
                                 entry.dead_at is None
                                 or time.monotonic() >= entry.dead_at + backoff
                             )
+                            if ready:
+                                if not self._start_worker(
+                                    binding,
+                                    restart_count=effective_restarts + 1,
+                                ):
+                                    self._demote_and_stop_workers()
+                                    self._cycle_count += 1
+                                    self._last_reconcile_at = _iso_now()
+                                    return self._snapshot()
                         else:
-                            cap_reached = True
-                if is_missing:
-                    if not self._start_worker(binding):
-                        self._demote_and_stop_workers()
-                        with self._lock:
-                            self._cycle_count += 1
-                            self._last_reconcile_at = _iso_now()
-                            return self._snapshot()
-                elif is_dead:
-                    if ready_to_restart:
-                        if not self._start_worker(
-                            binding,
-                            restart_count=effective_restarts + 1,
-                        ):
-                            self._demote_and_stop_workers()
-                            with self._lock:
-                                self._cycle_count += 1
-                                self._last_reconcile_at = _iso_now()
-                                return self._snapshot()
-                    elif cap_reached:
-                        log.warning(
-                            "binding %s: restart cap reached (%d), not restarting",
+                            log.warning(
+                                "binding %s: restart cap reached (%d), not restarting",
+                                binding_id,
+                                self._max_restarts,
+                            )
+
+                # Stop workers for excluded bindings (paused/retired) first,
+                # then any remaining workers no longer in the desired fleet.
+                for binding_id in list(self._workers):
+                    if binding_id in excluded_ids:
+                        self._terminate_worker(
                             binding_id,
-                            self._max_restarts,
+                            reason="binding excluded from fleet (paused or retired)",
+                        )
+                    elif binding_id not in desired:
+                        self._terminate_worker(
+                            binding_id,
+                            reason="binding no longer in fleet desired state",
                         )
 
-            # Stop workers for excluded bindings (paused/retired) first,
-            # then any remaining workers no longer in the desired fleet.
-            with self._lock:
-                worker_binding_ids = list(self._workers)
-            for binding_id in worker_binding_ids:
-                if binding_id in excluded_ids:
-                    self._terminate_worker(
-                        binding_id,
-                        reason="binding excluded from fleet (paused or retired)",
-                    )
-                elif binding_id not in desired:
-                    self._terminate_worker(
-                        binding_id,
-                        reason="binding no longer in fleet desired state",
-                    )
-
-            with self._lock:
-                active_ids = {
-                    bid for bid, w in self._workers.items()
-                    if w.status != "stopped"
-                    and (w.process is None or w.process.poll() is None)
-                }
-            self._cleanup_retired_state_files(
-                raw_excluded,
-                desired_ids=set(desired),
-                active_ids=active_ids,
-            )
-            with self._lock:
+                self._cleanup_retired_state_files(
+                    raw_excluded, desired_ids=set(desired), active_ids={
+                        bid for bid, w in self._workers.items()
+                        if w.status != "stopped"
+                        and (w.process is None or w.process.poll() is None)
+                    },
+                )
                 self._last_error = None
                 self._publish_snapshot()
-            self._publish_loop_truth(desired)
+                self._publish_loop_truth(desired)
 
-            with self._lock:
-                self._cycle_count += 1
-                self._last_reconcile_at = _iso_now()
-                self._publish_snapshot()
-                return self._snapshot()
+            self._cycle_count += 1
+            self._last_reconcile_at = _iso_now()
+            return self._snapshot()
 
     @staticmethod
     def _json_file_has_pending(path: Path, keys: tuple[str, ...]) -> bool:
@@ -1545,41 +1485,39 @@ class PaperFleetReconciler:
             return True
 
         binding_id = binding["binding_id"]
-        with self._atomic_snapshot_transition():
-            port = self._allocate_port()
-            env = self._build_worker_env(binding)
-            env["PORT"] = str(port)
-            monitoring_session_id = self._open_monitoring_session(
-                binding,
-                restart_count=restart_count,
-            )
+        port = self._allocate_port()
+        env = self._build_worker_env(binding)
+        env["PORT"] = str(port)
+        monitoring_session_id = self._open_monitoring_session(
+            binding,
+            restart_count=restart_count,
+        )
 
         try:
             process = self._spawn(binding_id, port, env)
         except Exception as exc:  # noqa: BLE001
-            fence_ok = self._has_current_fence()
-            with self._atomic_snapshot_transition():
-                self._free_port(port)
-                self._end_monitoring_session(
-                    monitoring_session_id,
-                    reason="spawn_failed",
-                    error=str(exc),
-                )
-                log.error("failed to start worker for binding %s: %s", binding_id, exc)
-                self._workers[binding_id] = WorkerEntry(
-                    binding_id=binding_id,
-                    runtime_id=str(binding.get("runtime_id") or ""),
-                    capital_pool_id=str(binding.get("capital_pool_id") or ""),
-                    port=port,
-                    process=None,
-                    started_at=_iso_now(),
-                    monitoring_session_id=monitoring_session_id,
-                    restart_count=restart_count,
-                    last_error=str(exc),
-                    status="dead",
-                    fence_token=self._fence_token,
-                )
-            return fence_ok
+            self._free_port(port)
+            self._end_monitoring_session(
+                monitoring_session_id,
+                reason="spawn_failed",
+                error=str(exc),
+            )
+            log.error("failed to start worker for binding %s: %s", binding_id, exc)
+            self._workers[binding_id] = WorkerEntry(
+                binding_id=binding_id,
+                runtime_id=str(binding.get("runtime_id") or ""),
+                capital_pool_id=str(binding.get("capital_pool_id") or ""),
+                port=port,
+                process=None,
+                started_at=_iso_now(),
+                monitoring_session_id=monitoring_session_id,
+                restart_count=restart_count,
+                last_error=str(exc),
+                status="dead",
+                fence_token=self._fence_token,
+            )
+            self._publish_snapshot()
+            return self._has_current_fence()
 
         # Spawning is outside the leader store transaction and can block past
         # the lease deadline.  Validate the exact fence again before exposing
@@ -1596,34 +1534,34 @@ class PaperFleetReconciler:
                         process.wait(timeout=5)
                 except OSError:
                     pass
-            with self._atomic_snapshot_transition():
-                self._free_port(port)
-                self._end_monitoring_session(
-                    monitoring_session_id,
-                    reason="spawn_fence_lost",
-                    error="leader fence expired while worker spawn was in progress",
-                )
-                self._is_leader = False
-                self._last_error = (
-                    f"leader fence expired while spawning worker for binding {binding_id}"
-                )
-                log.error(self._last_error)
+            self._free_port(port)
+            self._end_monitoring_session(
+                monitoring_session_id,
+                reason="spawn_fence_lost",
+                error="leader fence expired while worker spawn was in progress",
+            )
+            self._is_leader = False
+            self._last_error = (
+                f"leader fence expired while spawning worker for binding {binding_id}"
+            )
+            self._publish_snapshot()
+            log.error(self._last_error)
             return False
 
-        with self._atomic_snapshot_transition():
-            entry = WorkerEntry(
-                binding_id=binding_id,
-                runtime_id=str(binding.get("runtime_id") or ""),
-                capital_pool_id=str(binding.get("capital_pool_id") or ""),
-                port=port,
-                process=process,
-                started_at=_iso_now(),
-                monitoring_session_id=monitoring_session_id,
-                restart_count=restart_count,
-                status="running",
-                fence_token=self._fence_token,
-            )
-            self._workers[binding_id] = entry
+        entry = WorkerEntry(
+            binding_id=binding_id,
+            runtime_id=str(binding.get("runtime_id") or ""),
+            capital_pool_id=str(binding.get("capital_pool_id") or ""),
+            port=port,
+            process=process,
+            started_at=_iso_now(),
+            monitoring_session_id=monitoring_session_id,
+            restart_count=restart_count,
+            status="running",
+            fence_token=self._fence_token,
+        )
+        self._workers[binding_id] = entry
+        self._publish_snapshot()
         log.info(
             "started worker for binding %s runtime=%s port=%d restarts=%d",
             binding_id,
@@ -1653,12 +1591,10 @@ class PaperFleetReconciler:
     ) -> None:
         if enforce_fence:
             self._require_current_fence()
-        with self._lock:
-            entry = self._workers.get(binding_id)
-            if entry is None:
-                return
-            proc = entry.process
-        exit_code: Optional[int] = None
+        entry = self._workers.get(binding_id)
+        if entry is None:
+            return
+        proc = entry.process
         if proc is not None and proc.poll() is None:
             log.info(
                 "terminating worker for binding %s (reason: %s)", binding_id, reason
@@ -1672,27 +1608,15 @@ class PaperFleetReconciler:
                     proc.wait(timeout=5)
             except OSError:
                 pass
-            exit_code = proc.returncode
-        with self._atomic_snapshot_transition():
-            if exit_code is not None:
-                entry.last_exit_code = exit_code
-            pending_closures = getattr(self, "_pending_stale_session_closures", {}).pop(
-                binding_id, []
-            )
-            for sid, s_reason, s_marker, s_force in pending_closures:
-                self._end_monitoring_session(
-                    sid,
-                    reason=s_reason,
-                    staleness=s_marker,
-                    force=s_force,
-                )
-            self._end_monitoring_session(
-                entry.monitoring_session_id,
-                reason=reason or "worker_stopped",
-            )
-            entry.status = "stopped"
-            self._free_port(entry.port)
-            self._workers.pop(binding_id, None)
+            entry.last_exit_code = proc.returncode
+        self._end_monitoring_session(
+            entry.monitoring_session_id,
+            reason=reason or "worker_stopped",
+        )
+        entry.status = "stopped"
+        self._free_port(entry.port)
+        del self._workers[binding_id]
+        self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Monitoring sessions
@@ -1781,52 +1705,49 @@ class PaperFleetReconciler:
         binding: Dict[str, Any],
         *,
         restart_count: int,
-        publish: bool = True,
     ) -> str:
         binding_id = str(binding.get("binding_id") or "")
         now = _iso_now()
-        with self._atomic_snapshot_transition(publish_on_exit=publish):
-            for session_id, session in list(self._monitoring_sessions.items()):
-                if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
-                    continue
-                staleness = self._monitoring_session_staleness_marker(session)
-                if staleness is not None and session.get("ended_at") in (None, ""):
-                    self._end_monitoring_session(
-                        session_id,
-                        reason=str(staleness.get("reason") or "stale_monitoring_session"),
-                        ended_at=now,
-                        staleness=staleness,
-                        force=True,
-                    )
-                elif self._monitoring_session_open(session):
-                    self._end_monitoring_session(
-                        session_id,
-                        reason="superseded_by_restart",
-                        ended_at=now,
-                    )
-            session_id = f"prmon-{binding_id}-{uuid.uuid4().hex[:8]}"
-            session = {
-                "id": session_id,
-                "session_id": session_id,
-                "session_type": "paper_runtime_monitoring",
-                "binding_id": binding_id,
-                "runtime_binding_id": binding_id,
-                "runtime_id": str(binding.get("runtime_id") or ""),
-                "capital_pool_id": str(binding.get("capital_pool_id") or ""),
-                "deployment_stage": "paper",
-                "status": "running",
-                "started_at": now,
-                "ended_at": None,
-                "restart_count": restart_count,
-                "stale_after_seconds": self._monitoring_heartbeat_stale_after,
-                "last_heartbeat_at": None,
-                "ended_reason": None,
-            }
-            self._monitoring_sessions[session_id] = session
-            self._persist_monitoring_sessions()
-            if publish:
-                self._publish_snapshot()
-            return session_id
+        for session_id, session in list(self._monitoring_sessions.items()):
+            if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
+                continue
+            staleness = self._monitoring_session_staleness_marker(session)
+            if staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(staleness.get("reason") or "stale_monitoring_session"),
+                    ended_at=now,
+                    staleness=staleness,
+                    force=True,
+                )
+            elif self._monitoring_session_open(session):
+                self._end_monitoring_session(
+                    session_id,
+                    reason="superseded_by_restart",
+                    ended_at=now,
+                )
+        session_id = f"prmon-{binding_id}-{uuid.uuid4().hex[:8]}"
+        session = {
+            "id": session_id,
+            "session_id": session_id,
+            "session_type": "paper_runtime_monitoring",
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "runtime_id": str(binding.get("runtime_id") or ""),
+            "capital_pool_id": str(binding.get("capital_pool_id") or ""),
+            "deployment_stage": "paper",
+            "status": "running",
+            "started_at": now,
+            "ended_at": None,
+            "restart_count": restart_count,
+            "stale_after_seconds": self._monitoring_heartbeat_stale_after,
+            "last_heartbeat_at": None,
+            "ended_reason": None,
+        }
+        self._monitoring_sessions[session_id] = session
+        self._persist_monitoring_sessions()
+        self._publish_snapshot()
+        return session_id
 
     def _end_monitoring_session(
         self,
@@ -1837,29 +1758,26 @@ class PaperFleetReconciler:
         staleness: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
         force: bool = False,
-        publish: bool = True,
     ) -> None:
         if not session_id:
             return
-        with self._lock:
-            session = self._monitoring_sessions.get(session_id)
-            if not session:
-                return
-            if session.get("ended_at") not in (None, ""):
-                return
-            if not force and not self._monitoring_session_open(session):
-                return
-            session["ended_at"] = ended_at or _iso_now()
-            session["status"] = "ended"
-            session["ended_reason"] = reason
-            session["terminal_reason"] = reason
-            if staleness is not None:
-                session["staleness"] = dict(staleness)
-            if error:
-                session["last_error"] = error
-            self._persist_monitoring_sessions()
-            if publish:
-                self._publish_snapshot()
+        session = self._monitoring_sessions.get(session_id)
+        if not session:
+            return
+        if session.get("ended_at") not in (None, ""):
+            return
+        if not force and not self._monitoring_session_open(session):
+            return
+        session["ended_at"] = ended_at or _iso_now()
+        session["status"] = "ended"
+        session["ended_reason"] = reason
+        session["terminal_reason"] = reason
+        if staleness is not None:
+            session["staleness"] = dict(staleness)
+        if error:
+            session["last_error"] = error
+        self._persist_monitoring_sessions()
+        self._publish_snapshot()
 
     def _monitoring_staleness(
         self,
@@ -1906,83 +1824,57 @@ class PaperFleetReconciler:
         may_derive_staleness = summaries is not None
         summaries = summaries or {}
         now = datetime.now(timezone.utc)
-        stale_worker_sessions: List[Tuple[str, str, str, Dict[str, Any], bool]] = []
-        stale_bindings: List[str] = []
-        with self._atomic_snapshot_transition(publish_on_exit=False):
-            changed = False
-            for session_id, session in list(self._monitoring_sessions.items()):
-                existing_staleness = self._monitoring_session_staleness_marker(session)
-                if existing_staleness is not None and session.get("ended_at") in (None, ""):
-                    reason = str(existing_staleness.get("reason") or "stale_monitoring_session")
-                    binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
-                    if binding_id and binding_id in self._workers:
-                        stale_worker_sessions.append(
-                            (binding_id, session_id, reason, existing_staleness, True)
-                        )
-                    else:
-                        self._end_monitoring_session(
-                            session_id,
-                            reason=reason,
-                            staleness=existing_staleness,
-                            force=True,
-                        )
-                    continue
-                if not self._monitoring_session_open(session):
-                    continue
-                runtime_id = str(session.get("runtime_id") or "")
-                summary = summaries.get(runtime_id)
-                if summary and summary.get("last_heartbeat_at"):
-                    session["last_heartbeat_at"] = summary.get("last_heartbeat_at")
-                    session["heartbeat_status"] = summary.get("state") or summary.get("connectivity_status") or "active"
-                    binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
-                    entry = self._workers.get(binding_id)
-                    if entry is not None:
-                        entry.last_heartbeat_at = str(summary.get("last_heartbeat_at"))
-                        entry.heartbeat_status = str(session["heartbeat_status"])
-                    changed = True
-                if not may_derive_staleness:
-                    continue
-                staleness = self._monitoring_staleness(session, summary, now=now)
-                if staleness is None:
-                    continue
-                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
-                if binding_id and binding_id in self._workers:
-                    stale_worker_sessions.append(
-                        (binding_id, session_id, staleness["reason"], staleness, False)
-                    )
-                else:
-                    self._end_monitoring_session(
-                        session_id,
-                        reason=staleness["reason"],
-                        staleness=staleness,
-                    )
-            if changed:
-                self._persist_monitoring_sessions()
-                self._publish_snapshot()
-            for binding_id, session_id, staleness_reason, staleness_marker, force_end in stale_worker_sessions:
-                if binding_id not in self._pending_stale_session_closures:
-                    stale_bindings.append(binding_id)
-                self._pending_stale_session_closures.setdefault(binding_id, []).append(
-                    (session_id, staleness_reason, staleness_marker, force_end)
+        stale_binding_ids: List[str] = []
+        changed = False
+        for session_id, session in list(self._monitoring_sessions.items()):
+            existing_staleness = self._monitoring_session_staleness_marker(session)
+            if existing_staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(existing_staleness.get("reason") or "stale_monitoring_session"),
+                    staleness=existing_staleness,
+                    force=True,
                 )
-
-        for binding_id in stale_bindings:
-            with self._lock:
-                has_worker = binding_id in self._workers
-            if has_worker:
+                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+                if binding_id:
+                    stale_binding_ids.append(binding_id)
+                continue
+            if not self._monitoring_session_open(session):
+                continue
+            runtime_id = str(session.get("runtime_id") or "")
+            summary = summaries.get(runtime_id)
+            if summary and summary.get("last_heartbeat_at"):
+                session["last_heartbeat_at"] = summary.get("last_heartbeat_at")
+                session["heartbeat_status"] = summary.get("state") or summary.get("connectivity_status") or "active"
+                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+                entry = self._workers.get(binding_id)
+                if entry is not None:
+                    entry.last_heartbeat_at = str(summary.get("last_heartbeat_at"))
+                    entry.heartbeat_status = str(session["heartbeat_status"])
+                changed = True
+            if not may_derive_staleness:
+                continue
+            staleness = self._monitoring_staleness(session, summary, now=now)
+            if staleness is None:
+                continue
+            self._end_monitoring_session(
+                session_id,
+                reason=staleness["reason"],
+                staleness=staleness,
+            )
+            changed = False
+            binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+            if binding_id:
+                stale_binding_ids.append(binding_id)
+        if changed:
+            self._persist_monitoring_sessions()
+            self._publish_snapshot()
+        for binding_id in stale_binding_ids:
+            if binding_id in self._workers:
                 self._terminate_worker(
                     binding_id,
                     reason="monitoring heartbeat stale",
                 )
-            with self._atomic_snapshot_transition(publish_on_exit=False):
-                leftover = self._pending_stale_session_closures.pop(binding_id, [])
-                for sid, s_reason, s_marker, s_force in leftover:
-                    self._end_monitoring_session(
-                        sid,
-                        reason=s_reason,
-                        staleness=s_marker,
-                        force=s_force,
-                    )
 
     def _fetch_runtime_summaries(self) -> Optional[Dict[str, Dict[str, Any]]]:
         if not self._telemetry_url:
@@ -2208,8 +2100,7 @@ class PaperFleetReconciler:
         self._last_resolve_unavailable = unavailable
         if unavailable:
             symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
-            with self._lock:
-                return self._source_snapshot_cache.get(symbol)
+            return self._source_snapshot_cache.get(symbol)
         return snapshot
 
     def _resolve_market_snapshot_ex(
@@ -2227,12 +2118,9 @@ class PaperFleetReconciler:
             try:
                 snap = self._fetch_source_snapshot(symbol)
             except SourceSnapshotUnavailable as exc:
-                with self._lock:
-                    count = self._source_unavailable_counts.get(symbol, 0) + 1
-                    self._source_unavailable_counts[symbol] = count
-                    has_cache = symbol in self._source_snapshot_cache
-                    self._source_unavailable_errors[symbol] = type(exc.cause).__name__
-                    self._publish_snapshot()
+                count = self._source_unavailable_counts.get(symbol, 0) + 1
+                self._source_unavailable_counts[symbol] = count
+                has_cache = symbol in self._source_snapshot_cache
                 log.warning(
                     "market input unavailable for %s (%s, consecutive=%d, cached_snapshot=%s)",
                     symbol,
@@ -2240,13 +2128,14 @@ class PaperFleetReconciler:
                     count,
                     has_cache,
                 )
-                return None, True
-            with self._lock:
-                self._source_unavailable_counts.pop(symbol, None)
-                self._source_unavailable_errors.pop(symbol, None)
-                if isinstance(snap, dict):
-                    self._source_snapshot_cache[symbol] = snap
+                self._source_unavailable_errors[symbol] = type(exc.cause).__name__
                 self._publish_snapshot()
+                return None, True
+            self._source_unavailable_counts.pop(symbol, None)
+            self._source_unavailable_errors.pop(symbol, None)
+            if isinstance(snap, dict):
+                self._source_snapshot_cache[symbol] = snap
+            self._publish_snapshot()
             return snap, False
         return None, False
 
@@ -2413,35 +2302,9 @@ class PaperFleetReconciler:
             snap["monitoring_session_count"] = len(snap["monitoring_sessions"])
         return snap
 
-    @contextlib.contextmanager
-    def _atomic_snapshot_transition(self, *, publish_on_exit: bool = True):
-        """Defer nested helper publications until a compound state transition completes."""
-        with self._lock:
-            self._defer_snapshot_publish_depth = (
-                getattr(self, "_defer_snapshot_publish_depth", 0) + 1
-            )
-            if publish_on_exit:
-                self._snapshot_publish_deferred = True
-            try:
-                yield
-            finally:
-                self._defer_snapshot_publish_depth = max(
-                    getattr(self, "_defer_snapshot_publish_depth", 1) - 1,
-                    0,
-                )
-                if (
-                    self._defer_snapshot_publish_depth == 0
-                    and getattr(self, "_snapshot_publish_deferred", False)
-                ):
-                    self._publish_snapshot()
-
     def _publish_snapshot(self) -> None:
         """Replace the reader view atomically; only writers take the cycle lock."""
         with self._lock:
-            if getattr(self, "_defer_snapshot_publish_depth", 0) > 0:
-                self._snapshot_publish_deferred = True
-                return
-            self._snapshot_publish_deferred = False
             # Sessions contain nested staleness metadata. Detach it as well as
             # the outer lists/dicts so later writer changes cannot leak through.
             self._published_snapshot = deepcopy(self._snapshot())
@@ -2597,7 +2460,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path in {"/", "/healthz", "/readyz"}:
             snap = recon.snapshot(include_ended_monitoring_sessions=False)
-            ready = bool(snap.get("cycle_count", 0) > 0) and snap.get("last_error") is None
+            ready = recon.is_ready() and snap.get("last_error") is None
             code = 200 if ready else 503
             self._write_json(code, {**snap, "ready": ready, "live": True})
             return
