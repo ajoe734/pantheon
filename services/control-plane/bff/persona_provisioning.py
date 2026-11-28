@@ -8,6 +8,7 @@ coordination after a process or replica restart.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from collections import OrderedDict
@@ -364,8 +365,9 @@ class PostgresPersonaProvisioningStore:
         self.schema = schema
         self._connect = connect
         self._directory_lock = RLock()
-        self._directory_cache: OrderedDict[str | None, tuple[int, list[ProvisioningRecord], int]] = OrderedDict()
+        self._directory_cache: OrderedDict[str | None, tuple[int, list[ProvisioningRecord] | None, int]] = OrderedDict()
         self._directory_cache_bytes = 0
+        self._directory_oversized_stamp: int | None = None
         self._bootstrap()
 
     @property
@@ -558,7 +560,7 @@ class PostgresPersonaProvisioningStore:
         return size(value)
 
     def list_for_directory(self, tenant_id: str | None = None) -> list[ProvisioningRecord]:
-        """Full projection inputs, validated by one cheap stamp read per call.
+        """SQL-selected projection inputs, validated by one stamp read per call.
 
         The stamp and a miss's rows share a REPEATABLE READ snapshot. Otherwise
         a concurrent commit between the two SELECTs could associate new rows
@@ -578,29 +580,42 @@ class PostgresPersonaProvisioningStore:
                 stamp = int(stamp_row[0])
                 cached = self._directory_cache.pop(tenant_id, None)
                 if cached is not None:
-                    self._directory_cache_bytes -= cached[2]
-                    if cached[0] == stamp:
+                    self._directory_cache_bytes -= cached[2] if cached[1] is not None else 0
+                    if cached[0] == stamp and cached[1] is not None:
                         self._directory_cache[tenant_id] = cached
                         self._directory_cache_bytes += cached[2]
                         return deepcopy(cached[1])
                 where = " WHERE tenant_id=%s" if tenant_id is not None else ""
                 cur.execute(
-                    f"SELECT {self._COLUMNS} FROM {self.table}{where} ORDER BY created_at ASC, persona_id ASC",
+                    f"SELECT {self._DIRECTORY_COLUMNS} FROM {self.table}{where} ORDER BY created_at ASC, persona_id ASC",
                     (tenant_id,) if tenant_id is not None else (),
                 )
-                records = [self._record(row) for row in cur.fetchall()]
-            entry = (stamp, records)
-            entry_bytes = self._directory_size((tenant_id, entry))
+                records = [self._directory_record(row) for row in cur.fetchall()]
+            # A negative cache entry remembers an oversized scope's size too:
+            # unchanged stamps may reload rows, but never repeat the graph walk.
+            entry_bytes = (cached[2] if cached is not None and cached[0] == stamp
+                           else self._directory_size((tenant_id, (stamp, records))))
             if entry_bytes <= min(self._DIRECTORY_MAX_ENTRY_BYTES, self._DIRECTORY_MAX_BYTES):
                 while self._directory_cache and (
                     len(self._directory_cache) >= self._DIRECTORY_MAX_ENTRIES
                     or self._directory_cache_bytes + entry_bytes > self._DIRECTORY_MAX_BYTES
                 ):
                     _, evicted = self._directory_cache.popitem(last=False)
-                    self._directory_cache_bytes -= evicted[2]
+                    self._directory_cache_bytes -= evicted[2] if evicted[1] is not None else 0
                 self._directory_cache[tenant_id] = (stamp, records, entry_bytes)
                 self._directory_cache_bytes += entry_bytes
                 return deepcopy(records)
+            while len(self._directory_cache) >= self._DIRECTORY_MAX_ENTRIES:
+                _, evicted = self._directory_cache.popitem(last=False)
+                self._directory_cache_bytes -= evicted[2] if evicted[1] is not None else 0
+            self._directory_cache[tenant_id] = (stamp, None, entry_bytes)
+            if self._directory_oversized_stamp != stamp:
+                logging.getLogger(__name__).warning(
+                    "Persona directory cache bypass stamp=%s tenant=%s size_bytes=%s cap_bytes=%s",
+                    stamp, tenant_id, entry_bytes,
+                    min(self._DIRECTORY_MAX_ENTRY_BYTES, self._DIRECTORY_MAX_BYTES),
+                )
+                self._directory_oversized_stamp = stamp
             return records
 
     # Read-only fleet projection.  The fleet list consumes only a handful of
@@ -634,6 +649,28 @@ class PostgresPersonaProvisioningStore:
         + ")) ELSE result END AS result,"
         "error,compensation,created_at,updated_at,lease_owner,lease_expires_at,attempt_count"
     )
+
+    # Directory projection also consumes the three risk-context references.
+    # Keep the original fleet methods and all coordinator/point reads unchanged.
+    _DIRECTORY_REFERENCE_KEYS = _FLEET_REFERENCE_KEYS + (
+        "requested_risk_profile_provenance",
+        "capital_pool_risk_policy_resolution",
+        "risk_policy_owner_decision_request",
+    )
+    _DIRECTORY_RECORD_FIELDS = _RECORD_FIELDS[:13]
+    _DIRECTORY_COLUMNS = _FLEET_COLUMNS.replace(
+        ",".join(f"'{k}'" for k in _FLEET_REFERENCE_KEYS),
+        ",".join(f"'{k}'" for k in _DIRECTORY_REFERENCE_KEYS),
+    ).removesuffix(
+        ",updated_at,lease_owner,lease_expires_at,attempt_count"
+    )
+
+    @classmethod
+    def _directory_record(cls, row: Any) -> ProvisioningRecord:
+        # Reuse the full-row decoder without fetching lease/retry bookkeeping.
+        # updated_at is unused by the read-only projection; use created_at as a
+        # deterministic placeholder instead of introducing a wall-clock value.
+        return cls._record((*row, row[12], None, None, 0))
 
     def list_by_tenant_for_fleet(self, tenant_id: str) -> list[ProvisioningRecord]:
         with self._connect(self.dsn) as conn, conn.cursor() as cur:

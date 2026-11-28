@@ -786,3 +786,24 @@ def test_llm_calls_without_a_recorded_source_count_are_null_with_reason(tmp_path
     out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", ledger_path=old)["llm_calls"]
     assert out["status"] == "ok" and out["calls"] == 4
     assert out["distinct_sources"] is None and out["distinct_sources_reason"] == "ledger_sources_column_missing"
+
+
+def test_llm_step_split_reads_same_real_ledger_row_read_only(tmp_path):
+    queue = _queue_with_jobs(tmp_path)
+    path, ledger = _ledger(tmp_path, {})
+    assert ledger.reserve_call("s1")
+    assert ledger.reserve_attempt("s1", step="compile") == "reserved"
+    before = path.read_bytes()
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
+    keys = ("calls", "compile_calls", "extraction_calls", "distinct_sources", "calls_per_source", "extraction_calls_per_source")
+    assert tuple(out[k] for k in keys) == (2, 1, 1, 1, 2.0, 1.0)
+    assert {k: out[k] for k in keys} == {k: ledger.summary()[k] for k in keys}
+    assert path.read_bytes() == before
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE calls DROP COLUMN compile_calls")
+    before = path.read_bytes()
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
+    assert (out["calls"], out["calls_per_source"]) == (2, 2.0)
+    assert all(out[k] is None for k in ("compile_calls", "extraction_calls", "extraction_calls_per_source"))
+    assert out["calls_split_reason"] == "ledger_compile_calls_column_missing"
+    assert path.read_bytes() == before

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import fcntl
+import builtins
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -19,6 +21,58 @@ from services.source_ingestion import requirement_state as m
 from services.source_ingestion.connectors.base import SourceRecord
 
 DEPLOYED_READER_COMMIT = "32fc7da61"  # shares the reader with 94b73806a
+
+
+@pytest.fixture(scope="module", autouse=True)
+def package_python_write_guard():
+    """Reject even transient source writes; also check files left by subprocesses."""
+    package_root = Path(m.__file__).parent.resolve()
+    tests_root = package_root / "tests"
+
+    def source_files():
+        return {p for p in package_root.rglob("*.py") if not p.is_relative_to(tests_root)}
+
+    def check_write(file):
+        if isinstance(file, int):
+            return  # an already-open file descriptor
+        path = Path(os.fsdecode(file)).resolve()
+        assert not (path.suffix == ".py" and path.is_relative_to(package_root)
+                    and not path.is_relative_to(tests_root)), f"test attempted package Python write: {path}"
+
+    def guarded_open(real_open):
+        def open_file(file, mode="r", *args, **kwargs):
+            if any(flag in mode for flag in "wax+"):
+                check_write(file)
+            return real_open(file, mode, *args, **kwargs)
+        return open_file
+
+    real_os_open = os.open
+
+    def open_fd(file, flags, *args, **kwargs):
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            check_write(file)
+        return real_os_open(file, flags, *args, **kwargs)
+
+    before = source_files()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(builtins, "open", guarded_open(builtins.open))
+        patch.setattr(io, "open", guarded_open(io.open))
+        patch.setattr(os, "open", open_fd)
+        yield
+    after = source_files()
+    assert after == before, f"package Python files changed: added={after - before}, removed={before - after}"
+
+
+@pytest.mark.parametrize("writer", [
+    lambda p: p.write_text("# forbidden probe\n"),
+    lambda p: builtins.open(p, "w"),
+    lambda p: os.open(p, os.O_WRONLY | os.O_CREAT),
+])
+def test_package_python_write_guard_rejects_transient_files(writer):
+    target = Path(m.__file__).with_name("_forbidden_test_probe.py")
+    with pytest.raises(AssertionError, match="test attempted package Python write"):
+        writer(target)
+    assert not target.exists()
 
 
 def _record(symbol: str, day: int, close: float) -> SourceRecord:
@@ -202,7 +256,7 @@ def _deployed_reader(tmp_path):
                              check=True, capture_output=True, text=True).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         pytest.skip("deployed reader commit not available")
-    target = Path(m.__file__).with_name("_deployed_requirement_state_probe.py")
+    target = tmp_path / "_deployed_requirement_state_probe.py"
     target.write_text(src, encoding="utf-8")
     try:
         spec = importlib.util.spec_from_file_location("services.source_ingestion._deployed_requirement_state_probe", target)
@@ -228,6 +282,38 @@ def test_deployed_reader_reads_compacted_journal_identically(tmp_path):
     node = next(n for n in ast.parse(old.SOURCE_TEXT).body
                 if isinstance(n, ast.FunctionDef) and n.name == "_market_snapshots_from_lines")
     assert ast.get_source_segment(old.SOURCE_TEXT, node) == inspect.getsource(m._market_snapshots_from_lines).rstrip()
+
+
+def test_deployed_reader_cleanup_cannot_race_runtime_digest(tmp_path, monkeypatch):
+    """Force enumerate -> probe cleanup -> read, without scheduler timing or sleeps."""
+    from services.source_ingestion import controller_worker
+
+    package_root = Path(m.__file__).parent
+    probe = package_root / "_deployed_requirement_state_probe.py"
+    real_rglob, real_write_text = Path.rglob, Path.write_text
+    deployments = []
+
+    def enumerate_then_cleanup(path, pattern):
+        paths = list(real_rglob(path, pattern))
+        if path == package_root and probe in paths:
+            # The reader process finishes after the digest process enumerates.
+            probe.unlink()
+        return iter(paths)
+
+    def write_then_hash(path, *args, **kwargs):
+        result = real_write_text(path, *args, **kwargs)
+        if path.name == probe.name:
+            deployments.append(controller_worker._runtime_deployment())
+        return result
+
+    monkeypatch.setattr(Path, "rglob", enumerate_then_cleanup)
+    monkeypatch.setattr(Path, "write_text", write_then_hash)
+    monkeypatch.delenv("IMAGE_DIGEST", raising=False)
+    old = _deployed_reader(tmp_path)
+    assert len(deployments) == 1
+    assert deployments[0]["image_digest"].startswith("application-sha256:")
+    assert Path(old.__file__).parent == tmp_path
+    assert old.__name__ == "services.source_ingestion._deployed_requirement_state_probe"
 
 
 def test_release_probe_bound_unchanged():
