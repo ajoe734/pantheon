@@ -13,7 +13,7 @@ import copy
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 BACKEND_ENV = "AGORA_TRADING_ROOM_STORE_BACKEND"
@@ -193,6 +193,76 @@ class TradingRoomStore:
             for handoff_id in self._handoffs_by_intent.get(intent_id, [])
             if handoff_id in self._handoffs
         ]
+
+    # Paper execution handoffs (AGORA-PAPER-INTENT-EXECUTION-20261127). The
+    # reader is the paper execution lane (paper-signal-producer); it writes the
+    # handoff state back here. Agora itself never routes an order.
+    PAPER_EXECUTION_QUEUE = "paper_execution"
+    PAPER_EXECUTION_OPEN_STATES = ("submitted", "accepted", "partially_filled")
+    _PAPER_EXECUTION_TRANSITIONS = {
+        "submitted": {"accepted", "rejected"},
+        "accepted": {"filled", "partially_filled", "rejected"},
+        "partially_filled": {"filled"},
+    }
+
+    def list_paper_execution_handoffs(
+        self, *, tenant_id: str, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Open paper_execution handoffs of one tenant, oldest first, bounded."""
+        items = []
+        for handoff in self._handoffs.values():
+            if handoff.get("target_queue") != self.PAPER_EXECUTION_QUEUE:
+                continue
+            if handoff.get("state") not in self.PAPER_EXECUTION_OPEN_STATES:
+                continue
+            owner = (handoff.get("paper_execution") or {}).get("owner") or {}
+            if str(owner.get("tenant_id") or "") != str(tenant_id):
+                continue
+            items.append(handoff)
+        items.sort(key=lambda h: (str(h.get("created_at") or ""), str(h.get("handoff_id"))))
+        return [dict(h) for h in items[: max(1, int(limit))]]
+
+    def apply_paper_execution_state(
+        self,
+        handoff_id: str,
+        *,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        updated_at: str,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """Write the paper execution owner's state back to one handoff.
+
+        Returns ``(handoff, changed)``. A replay of the current state with the
+        same result is idempotent (``changed`` False). Raises ``ValueError``
+        with ``paper_execution_transition_invalid`` for any other transition.
+        """
+        handoff = self._handoffs.get(handoff_id)
+        if handoff is None or handoff.get("target_queue") != self.PAPER_EXECUTION_QUEUE:
+            return None, False
+        block = dict(handoff.get("paper_execution") or {})
+        owner = block.get("owner") or {}
+        if str(owner.get("tenant_id") or "") != str(tenant_id):
+            return None, False
+        current = str(handoff.get("state") or "")
+        if current == state:
+            if (block.get("result") or {}) == result:
+                return dict(handoff), False
+            if state != "partially_filled":
+                raise ValueError("paper_execution_transition_invalid")
+        elif state not in self._PAPER_EXECUTION_TRANSITIONS.get(current, set()):
+            raise ValueError("paper_execution_transition_invalid")
+        history = list(block.get("state_history") or [])
+        history.append({"state": state, "at": updated_at, "reason_code": result.get("reason_code")})
+        block["result"] = dict(result)
+        block["state_history"] = history[-10:]
+        handoff["paper_execution"] = block
+        handoff["state"] = state
+        handoff["updated_at"] = updated_at
+        intent_id = handoff.get("intent_id")
+        if intent_id in self._intents:
+            self._intent_states[intent_id] = state
+        return dict(handoff), True
 
     def withdraw_intent(self, intent_id: str, *, withdrawn_at: str) -> Optional[Dict[str, Any]]:
         intent = self.set_intent_state(intent_id, "withdrawn")
@@ -536,6 +606,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
         mutators = {
             "upsert_decision_event", "record_trader_decision", "upsert_intent",
             "set_intent_state", "upsert_handoff", "withdraw_intent",
+            "apply_paper_execution_state",
             "check_and_record_idempotency_key", "upsert_workspace_proposal",
             "upsert_workspace", "upsert_widget_revision_proposal",
             "record_workspace_version",
@@ -543,6 +614,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
         readers = {
             "get_decision_event", "list_decision_events", "get_intent",
             "get_intent_state", "get_handoff", "list_handoffs_for_intent",
+            "list_paper_execution_handoffs",
             "get_workspace_proposal_record", "get_workspace_proposal_generation_meta",
             "get_workspace_record", "get_workspace_for_strategy", "list_workspaces",
             "get_widget_revision_proposal_record",

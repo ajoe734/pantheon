@@ -1,0 +1,184 @@
+{
+  "task_id": "AGORA-PAPER-INTENT-EXECUTION-20261127",
+  "title": "A trader-confirmed decision executes in the trader's own paper book through existing owners",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (section 8.3, task T8)",
+  "problem_register_class": "RC4 - Agora: the trading servant does not serve the human trader",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "depends_on": "PAPER-TRADER-BOOK-PROVISION-20261127 (done)",
+  "delivery_state": "source_and_tests_verified_security_condition_met_hosted_proof_pending_merge_deploy_and_secret",
+  "flow": [
+    "Trader presses 確認執行 / 修改部位: the decision lock and a TradingIntent (metadata.decision approve|modify, metadata.human_decision_id) are written as before.",
+    "POST /bff/agora/trading-intents/{id}/handoffs with requested_stage=paper, handoff_type=paper_execution_request: the BFF validates the request (confirmed decision, action enter/add/reduce/exit, positive share quantity, optional limit, symbol equals the intent subject, no short), stamps target_queue=paper_execution and a paper_execution block (environment paper, owner tenant/user/servant persona, order, decision lock id, daily_cap 50), and records it request-only.",
+    "paper-signal-producer cycle: AgoraPaperIntentConsumer drains open handoffs (GET /internal/agora/paper-execution/handoffs, service token + actor + tenant allow-list), validates stage, owner, the trader's own active paper RuntimeBinding (metadata persona equals the servant persona, tenant equals, paper), the order, and a stored Source price (fresh within 4 days), claims one of 50 daily slots, writes accepted back (compare-and-set on submitted), then enqueues one paper signal through DecisionSignalProducer on the binding queue (signal id uuid5 of the handoff id, environment paper, is_real_order false).",
+    "The paper runtime (existing order-level risk gate) and the broker paper simulator execute the signal; the consumer reads the broker paper order by client_order_id and writes filled / partially_filled (or rejected broker_rejected) back to the handoff and the intent state."
+  ],
+  "acceptance_criteria": {
+    "ac1_consumed_enqueued_and_written_back": {
+      "status": "verified_source_and_tests",
+      "implementation": [
+        "services/control-plane/bff/agora/trading_room/service.py::_handoff_stage_rule, _paper_execution_block, write_paper_execution_state",
+        "services/control-plane/bff/agora/trading_room/store.py::list_paper_execution_handoffs, apply_paper_execution_state",
+        "services/control-plane/bff/agora/trading_room/routes/paper_execution.py",
+        "services/execution/lean_runtime/agora_paper_intent_consumer.py::AgoraPaperIntentConsumer",
+        "services/execution/lean_runtime/paper_signal_producer.py::main (consumer_from_env, consume in the tick)"
+      ],
+      "tests": [
+        "services/execution/lean_runtime/test_agora_paper_intent_consumer.py::test_confirmed_paper_handoff_executes_in_the_trader_paper_book (real BFF routes, real DecisionSignalProducer, accepted then filled, second cycle neither re-admits nor re-enqueues)",
+        "services/execution/lean_runtime/test_agora_paper_intent_consumer.py::test_partial_fill_then_full_fill_and_broker_rejection",
+        "services/execution/lean_runtime/test_agora_paper_intent_consumer.py::test_binding_must_be_the_trader_own_paper_book (owner, tenant, paper-binding rejection)",
+        "services/control-plane/bff/tests/test_agora_paper_intent_execution.py (request validation, service boundary fail-closed, drain scope, writeback transitions and idempotency, schema validity)"
+      ],
+      "idempotency": "signal id and decision id are uuid5 / string of the handoff id; admission record agora-intent:<handoff>, enqueued marker agora-intent-enqueued:<handoff> and write-once daily slots (SET NX) make every retry a no-op; writeback replay of the same state and result returns status exists"
+    },
+    "ac2_paper_validation_request_removed": {
+      "status": "verified",
+      "decision": "removed: no reader exists and the paper stage now has a real one",
+      "changes": [
+        "GovernedIntentHandoffRequest handoff_type and target_queue literals",
+        "TradingRoomService._handoff_stage_rule (paper -> paper_execution_request / paper_execution)",
+        "new superseding schema services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json registered in bundle_index.v1_14.json; v4 stays in bundle v1.3 (AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127 later removed shadow_research there; this task also drops shadow_research from v15 since shadow now writes a decision lock)"
+      ],
+      "test": "services/control-plane/bff/tests/test_agora_paper_intent_execution.py::test_paper_validation_request_and_management_governance_are_removed"
+    },
+    "ac3_daily_cap_50_in_runtime_budget": {
+      "status": "verified",
+      "cap": "50 executed (accepted) intents per trader servant per Taipei day; the 51st is rejected with reason_code daily_cap; AgoraPaperIntentConsumer refuses a cap above 50",
+      "budget_entry": "docs/operations/storage-manifest.json runtime_budgets, task AGORA-PAPER-INTENT-EXECUTION-20261127 (writer, cadence, cap, measured size, growth, cleanup, bound_proof AGORA_PAPER_INTENT_DAILY_CAP = 50)",
+      "measured_sizes_bytes": {
+        "handoff_at_submit": 1073,
+        "handoff_after_filled": 1816,
+        "redis_admission_record": 324,
+        "redis_cap_slot": 48,
+        "redis_enqueued_marker": 92,
+        "paper_signal": 1925
+      },
+      "tests": [
+        "test_agora_paper_intent_consumer.py::test_daily_cap_rejects_with_daily_cap_and_resets_next_taipei_day",
+        "test_agora_paper_intent_consumer.py::test_daily_cap_is_fifty_and_cannot_be_raised",
+        "test_agora_paper_intent_consumer.py::test_daily_cap_is_stated_in_the_runtime_budget",
+        "scripts/check_storage_manifest.py passed"
+      ]
+    },
+    "ac4_no_order_route_and_nothing_reaches_canary_or_live": {
+      "status": "verified",
+      "tests": [
+        "test_agora_paper_intent_execution.py::test_agora_trading_room_exposes_no_order_route (no order/broker/api path on the trading-room router; store still rejects a wrong no_order_route_proof)",
+        "test_agora_paper_intent_execution.py::test_paper_execution_module_imports_no_broker_or_order_client",
+        "test_agora_paper_intent_execution.py::test_writeback_requires_no_order_route_proof and test_writeback_rejects_untyped_or_non_paper_state (environment live/canary refused)",
+        "test_agora_paper_intent_execution.py::test_writeback_cannot_touch_canary_live_or_foreign_tenant_handoffs",
+        "test_agora_paper_intent_consumer.py::test_nothing_on_this_path_reaches_canary_live_or_an_invalid_order (live/canary stage, wrong queue, wrong type, wrong proof, live environment all rejected non_paper_stage; nothing enqueued)",
+        "test_agora_paper_intent_consumer.py::test_binding_must_be_the_trader_own_paper_book (live and canary bindings rejected binding_not_paper)",
+        "test_agora_paper_intent_consumer.py::test_consumer_module_has_no_live_or_canary_route",
+        "paper_signal_producer.main still calls _require_paper_only_configuration() (refuses live/canary flags)"
+      ],
+      "canary_live": "canary and live handoffs keep promotion_review_request / promotion_review and are never drained by the paper execution routes"
+    },
+    "ac5_hosted_proof": {
+      "status": "pending_post_merge_dev_deploy",
+      "needs": [
+        "merge, then dev deploy of operator-bff and paper-signal-producer (docker-compose.yml wires AGORA_PAPER_EXECUTION_SERVICE_TOKEN / _TENANTS on both; the dev default local token is accepted only outside stage and prod posture)",
+        "a dev trader with an active paper book from T7 (POST /bff/agora/servant/paper-book/ensure) and one confirmed decision with a stage paper handoff carrying symbol, action and quantity",
+        "read back GET /bff/agora/trading-intents/{intent_id}: handoffs[0].state accepted then filled and paper_execution.result (runtime_binding_id, signal_id, broker_order_id, fill_qty, fill_price) from the paper-signal-producer health file agora_paper_intents counters and the BFF"
+      ],
+      "not_claimed": "no hosted read or write was made in this pass; the worker has no hosted operator credential. This evidence does not claim hosted acceptance."
+    }
+  },
+  "contract_changes": [
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml: POST /bff/agora/trading-intents/{intent_id}/handoffs (GovernedIntentHandoffV114, receipt)",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json: route and paper_execution owner contracts",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json: new schema file, new digests, route family agora.trading.paper-execution.v1",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json and docs/bff/contract_snapshots/route-diff-baseline.json: two service-only routes under /internal/agora/paper-execution (+2 routes)"
+  ],
+  "scope_notes": [
+    "Files outside the declared artifacts that the change needs (artifact-contract revision is Human/Ops only and pre-dispatch): services/control-plane/bff/agora/trading_room/store.py (durable handoff drain and state writeback; the Postgres wrapper only persists methods it lists), services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json (the declared v4 file is digest-frozen by bundle v1.3, so the superseding schema ships in the v1.14 bundle), docker-compose.yml (AGORA_PAPER_EXECUTION_* and PANTHEON_AGORA_BFF_INTERNAL_URL on operator-bff and paper-signal-producer). In stage and prod posture the BFF refuses the local default token, so AGORA_PAPER_EXECUTION_SERVICE_TOKEN and AGORA_PAPER_EXECUTION_SERVICE_TENANTS must be set in the deployment environment; .env.example does not list them because it is outside the contract."
+  ],
+  "verification": {
+    "commands": [
+      {
+        "cmd": "pytest services/control-plane/bff/tests/test_agora_paper_intent_execution.py services/execution/lean_runtime/test_agora_paper_intent_consumer.py",
+        "result": "60 passed"
+      },
+      {
+        "cmd": "pytest services/control-plane/bff/agora/trading_room services/execution/lean_runtime/test_paper_signal_producer.py test_signal_producer.py test_signal_consumer.py",
+        "result": "268 passed, 3 skipped"
+      },
+      {
+        "cmd": "pytest test_bff_test_architecture.py test_trader_paper_book_provisioning.py test_agora_router.py scripts/test_agora_bundle_digests.py test_agora_compat_manifest.py test_bff_route_diff.py test_check_storage_manifest.py test_current_l12_compose_wiring.py",
+        "result": "152 passed"
+      },
+      {
+        "cmd": "pytest services/control-plane/tests/agora --ignore=test_cross_user_isolation.py",
+        "result": "221 passed"
+      },
+      {
+        "cmd": "scripts/check_storage_manifest.py; scripts/bff_route_manifest_backend.py --check; scripts/bff_route_diff.py --check-baseline",
+        "result": "passed; routes match snapshot; baseline ok"
+      },
+      {
+        "cmd": "pytest test_agora_paper_intent_execution.py test_agora_paper_intent_consumer.py trading_room/test_trading_room.py test_bff_test_architecture.py; scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow'",
+        "result": "194 passed; 13 passed (security-condition rerun)"
+      }
+    ],
+    "environment_failures_not_caused_by_this_change": [
+      "scripts/test_bff_package_boundary_prerequisite.py (5 tests): the tests run python -I in a subprocess, and this worker interpreter has no installed repo path, so the subprocess raises ModuleNotFoundError: No module named 'services'; the same file was in the T7 verification run (151 passed) on a worker with an installed venv",
+      "services/control-plane/tests/agora/test_cross_user_isolation.py: collection needs a Postgres DSN (ValueError: Postgres DSN is required)"
+    ],
+    "dev_sync_revalidation": {
+      "merged_dev": "2c72f5e28",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127 instance and this task's T8 instance and status",
+      "incoming_dev_files_overlap_task_code": false,
+      "results": [
+        "pytest paper-intent execution + consumer + trading_room + lean_runtime producer/signal suites: 351 passed, 3 skipped (test_paper_signal_producer.py rerun in a venv with PyYAML: 134 passed)",
+        "pytest services/control-plane/tests/agora (excluding Postgres-only test_cross_user_isolation.py) + architecture/provisioning/router/bundle/compat/route-diff/storage/compose tests: 373 passed",
+        "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
+        "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
+    },
+    "dev_sync_revalidation_2": {
+      "merged_dev": "ba06998bf",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's #7967 note and PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 instance, and this task's T8 instance and status",
+      "incoming_dev_overlap": "services/execution/lean_runtime/paper_signal_producer.py auto-merged: dev's _is_trader_servant_paper_book_binding gate stops produce/settle_pending_intraday/_produce_current for trader servant paper books; the Agora consumer enqueues through DecisionSignalProducer directly and is not gated, so trader books execute trader intents only",
+      "results": [
+        "pytest paper-intent execution + consumer + trading_room + lean_runtime producer/signal suites + trader paper book provisioning/enrollment-skip + runtime-manager fleet desired state: 430 passed, 3 skipped",
+        "pytest services/control-plane/tests/agora (excluding Postgres-only test_cross_user_isolation.py) + architecture/router/bundle/compat/storage/compose tests: 307 passed",
+        "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
+        "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
+    },
+    "dev_sync_revalidation_3": {
+      "merged_dev": "7a366a60b",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's IMITATION-TRADER-SHADOW-COMPARISON-20261127 (T10) instance and status and this task's T8 instance and status; bundle_index.v1_14.json keeps the v15 handoff schema with recomputed capability manifest and OpenAPI sha256; route-diff baseline regenerated (690 backend routes)",
+      "incoming_dev_overlap": "dev's imitation-comparison route and capability/OpenAPI additions auto-merged into trading_room service, routes, capability manifest, OpenAPI and backend route manifest alongside the paper-execution routes",
+      "results": [
+        "pytest paper-intent execution + servant data tools + habit profile + trader paper book provisioning/enrollment-skip + trading_room: 186 passed",
+        "pytest lean_runtime agora paper intent consumer + paper_signal_producer: 173 passed",
+        "pytest scripts/test_bff_route_diff.py scripts/test_deploy_nonprod_vm.py scripts/test_check_storage_manifest.py: 260 passed, 4 skipped",
+        "pytest services/policy-learning/tests/test_trader_imitation_candidates.py: 4 passed",
+        "agora_schema_bundle.py --verify, check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
+    }
+  },
+  "residuals": [
+    "Legacy fixture tests (services/control-plane/tests/agora/test_winner_branch_e2e_v13.py, test_winner_branch_trading_room_e2e.py, test_agora_isolation_matrix.py) still describe paper -> management_governance; they validate hand-built fixtures against the frozen v4 schema and do not exercise the service.",
+    "The trader paper binding is also an active paper binding for the artifact strategy path of paper-signal-producer; with no executable artifact it may report degraded for that binding in the health file. The consumer does not depend on that path.",
+    "Handoff records live in the single trading-room JSONB row with no retention job (about 33 MB per trader per year at the daily cap); owner: trading-room store.",
+    "The market price is the latest stored Source close (daily snapshot), not an intraday quote; fills are simulated paper fills labelled execution_observation_kind pantheon_paper_proxy in the signal metadata. Writing that kind onto the decision lock human_actual arm is T9 (AGORA-PAPER-BOOK-READBACK-20261127)."
+  ],
+  "security_condition": {
+    "operator_approval": "2026-11-27 (coordinator 70b5f70f): artifact adds approved on the condition that the paper-execution service token never works with its public default",
+    "risk": "the repository is public and /internal/agora/* is reachable through the public api.dev host (401 without a token), so the compose default token is public knowledge",
+    "rule": "outside the explicit local profile (AGORA_PAPER_EXECUTION_TOKEN_PROFILE=local, never in staging/prod posture) an unset, empty, public-default, env-example or placeholder (replace-me/changeme/change-me/example/dummy/placeholder prefix) token leaves the lane not_configured",
+    "operator_bff": "every call to /internal/agora/paper-execution/* answers 503 with detail {boundary, state: not_configured, reason, token_profile}; the same state is logged once at router build (never the token); the service starts and stays healthy",
+    "paper_signal_producer": "consumer_status_from_env returns no consumer and health file field agora_paper_intent_consumer = {state: not_configured, reason}; never raises (PANTHEON_AGORA_PAPER_INTENT_CONSUMER=on with a missing secret no longer raises); the producer keeps its strategy cycle and is not degraded",
+    "wiring": "docker-compose.yml passes AGORA_PAPER_EXECUTION_SERVICE_TOKEN and AGORA_PAPER_EXECUTION_TOKEN_PROFILE (default local) to operator-bff and paper-signal-producer; GitHub secret DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN -> nonprod-deploy.yml env (all 8 DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN sites) -> deploy_nonprod_vm.sh maps to AGORA_PAPER_EXECUTION_SERVICE_TOKEN, passes it through the remote command prefix with shell_quote, logs dev_agora_paper_execution_service_token_configured=true|false, and runs compose with AGORA_PAPER_EXECUTION_TOKEN_PROFILE=hosted. No deploy refusal was added (2026-11-17 rule); a missing secret cannot roll back a dev deploy",
+    "readiness_note": "the shared operator-bff /health handler is outside the scoped artifacts, so the BFF readable not_configured state is carried by the route's 503 detail and the startup log line instead of /health",
+    "tests": [
+      "services/control-plane/bff/tests/test_agora_paper_intent_execution.py::test_public_default_or_placeholder_token_is_rejected_outside_local (default/placeholder/empty rejected even with the matching bearer; local profile and a real secret accepted; token not echoed)",
+      "services/execution/lean_runtime/test_agora_paper_intent_consumer.py::test_consumer_stays_off_for_default_or_placeholder_token and test_consumer_from_env_is_off_until_configured",
+      "scripts/test_deploy_nonprod_vm.py::test_dev_deploy_maps_agora_paper_execution_token_without_printing_it and test_dev_deploy_wires_agora_paper_execution_token_through_secret_pattern"
+    ],
+    "operator_action_pending": "create GitHub secret DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN (and set AGORA_PAPER_EXECUTION_SERVICE_TENANTS for the dev tenant) before the hosted proof; until then the lane is not_configured by design"
+  },
+  "runtime_budget_note": "Unchanged by the security condition: no new storage, cadence or writer. 50 executed intents per trader per Taipei day cap is stated in docs/operations/storage-manifest.json runtime_budgets (task AGORA-PAPER-INTENT-EXECUTION-20261127); a not_configured lane performs no drain, no writes and no enqueue."
+}
