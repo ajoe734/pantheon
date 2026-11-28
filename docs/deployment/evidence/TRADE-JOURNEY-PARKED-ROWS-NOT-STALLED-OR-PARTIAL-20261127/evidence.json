@@ -26,7 +26,13 @@
     "cleanup": "no runtime state created; release probe stdout follows existing CI retention",
     "hosted_scale": "Existing projection population is aggregated in SQL without a row window; decision contract reads are correlated by tenant/environment/journey and use existing stage indexes. No full timeline load for metrics. Probe uses the existing release cadence only."
   },
-  "residual_findings": [],
+  "residual_findings": [
+    {
+      "surface": "services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
+      "finding": "Full local service batch exceeded its existing capacity p95 ceiling: 5.417s versus 5.0s. The CI job that returned this task passed this test; its sole failure was the HOLD attention assertion. No capacity code or thresholds changed in this task.",
+      "disposition": "Coordinator must attach to existing CI reliability/capacity work package before closure; root cause undiagnosed. Isolated rerun also fails at 5.203s. This test measures projector writes, not BFF reads; test, harness, projector and writer store sources match current dev exactly. No thresholds relaxed."
+    }
+  ],
   "implementation": {
     "owned_layer": "BFF read normalization, projection-reader SQL filters and aggregate metrics, read-only release probe",
     "unchanged_layers": [
@@ -79,6 +85,24 @@
       "base_commit": "0bd60b9dae0a756b96f4dd7157a27c1135979289"
     }
   ],
+  "ci_repair_validation": [
+    {
+      "command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same isolated DSN> .venv-pantheon/bin/python -m pytest -q --disable-warnings services/trade_journey",
+      "result": "exit 1; 569 passed, 33 skipped, 1 failed, 95 warnings in 147.01s; sole failure: existing capacity p95 test 5.417s > 5.0s; HOLD roundtrip passed",
+      "timeout_seconds": 240
+    },
+    {
+      "command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same isolated DSN> .venv-pantheon/bin/python -m pytest -q --disable-warnings services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/control-plane/bff/tests/test_trade_journey_readable_residuals.py services/control-plane/bff/tests/test_trade_journey_metrics_scope.py services/control-plane/bff/tests/test_trade_journey_list_identity.py services/control-plane/bff/tests/test_trade_journey_shared_identity_filter.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_trade_journey_correlation_envelope.py services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
+      "result": "exit 0; 103 passed, 0 skipped, 3 warnings in 24.29s",
+      "timeout_seconds": 150,
+      "cleanup": "Both batches shared one isolated PostgreSQL 16 container provisioned by existing helper, rankings owner table bootstrapped as in CI; container cleanup completed after terminal subprocess outputs. Outer runner exit 1 preserves full service batch failure."
+    },
+    {
+      "command": "TEST_DATABASE_URL=<fresh isolated PostgreSQL 16 DSN> DATABASE_URL=<same isolated DSN> .venv-pantheon/bin/python -m pytest -q --disable-warnings services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
+      "result": "exit 1; 1 failed in 19.97s; p95 5.203s > 5.0s; same capacity timing failure; schema and container cleanup complete",
+      "timeout_seconds": 90
+    }
+  ],
   "hosted_acceptance": {
     "status": "pending deployment",
     "probe": "acceptance/probes/trade-journey-parked-expired",
@@ -87,7 +111,7 @@
   "ci_resumption": {
     "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46113001832/job/140883125811",
     "failure": "Service suites (postgres): 1 failed, 567 passed, 33 skipped; recorded HOLD integration test retained an attention expectation contradicted by AC4",
-    "local_reproduction": "Before fix: timeout-free focused pytest command returned exit 1, 1 failed in 4.86s with the same assert 0 == 1 at test_lifecycle_projector.py:3737",
+    "local_reproduction": "Before fix: .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip returned exit 1, 1 failed in 4.86s with the same assert 0 == 1 at test_lifecycle_projector.py:3737",
     "local_regression": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip: exit 0, 1 passed, 1 dependency deprecation warning in 4.99s; ephemeral PostgreSQL 16 container cleaned by fixture",
     "scope": "Update existing producer -> relational projector -> BFF integration assertions required by AC3/AC4/AC6; no production code changes in CI repair",
     "merged_base": "287701d460de11ef8a2cc6b0323c45417d10d48f"
