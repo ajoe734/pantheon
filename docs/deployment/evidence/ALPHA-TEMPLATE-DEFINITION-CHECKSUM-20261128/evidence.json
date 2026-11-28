@@ -6,7 +6,7 @@
   "delivery": {
     "repository": "ajoe734/pantheon",
     "target": "dev",
-    "source_review": "pending independent review",
+    "source_review": "pending fresh independent exact-head review after merge-state-dirty return; prior approval does not bind the new head",
     "hosted": "pending operator acceptance; no VM/SSH access used"
   },
   "incident": {
@@ -97,5 +97,35 @@
     ],
     "earlier_batches": "System python lacked pytest; first provisioned collection failed due to missing new pytest import; next batch terminal result 2 failed/129 passed (new test errors corrected). These failed batches are not counted as passing."
   },
-  "residual_findings": []
+  "residual_findings": [],
+  "integration_repair": {
+    "cause": "PR #8023 became CONFLICTING / DIRTY after dev updated the same RC2 problem-register row.",
+    "base_sha": "adf738de696747900ec92b7299d356bf91b85d6b",
+    "anchor_commit": "418e3dd6e8b5e6574a1940d110616870c02937ec",
+    "resolution": "Preserved the complete upstream register row, including L2-HYPOTHESIS-CARD-CATALOGUE-GROUNDED-20261128 and hosted checksum incident diagnosis; appended this task source evidence and pending 2026-11-30 10:00Z acceptance. No product code changed in the repair.",
+    "scoped_diff": "11 original task artifacts only relative to refreshed dev; no unmerged paths or unrelated worktree changes.",
+    "review": "Resubmit PR #8023 to assigned reviewer Antigravity for a fresh exact-head binding; only the canonical supervisor integrator may merge.",
+    "validation": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "exit_status": 0,
+        "result": "Provisioned checkout interpreter using supervisor dependency Python; foreign-cwd imports verified."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest -q services/registry/test_alpha_template.py services/research/tests/test_template_demand_search.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py acceptance/test_discovery_pipeline_day.py",
+        "exit_status": 0,
+        "result": "132 passed, 257 deprecation warnings in 79.36s; terminal output collected."
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD; git diff --check; git ls-files -u; git merge-base --is-ancestor origin/dev HEAD",
+        "exit_status": 0,
+        "result": "Whitespace clean, no unmerged paths, refreshed base included."
+      },
+      {
+        "command": "Local validated seed digest comparison and compact JSON byte measurements (exclusion keys extracted from template_demand_search.py)",
+        "exit_status": 0,
+        "result": "182/182 seed digests preserved: 171 time_series and 11 cross_sectional; checksum-only aggregate 81 bytes; actual five-reason aggregate 188 bytes."
+      }
+    ]
+  }
 }
