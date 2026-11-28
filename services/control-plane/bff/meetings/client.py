@@ -9,6 +9,8 @@ import re
 import json
 import os
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager
 import urllib.error
 import urllib.parse
@@ -23,9 +25,17 @@ from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
     management_read_deadline,
     selected_tenant,
+    submit_owner_read,
 )
 
 MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000
+
+# Four concurrent inbox reads, each with three independent consultation GETs.
+# Slots bound outstanding work as well as threads; there is no growing queue.
+_INBOX_CONSULTATION_SLOTS = threading.BoundedSemaphore(12)
+_INBOX_CONSULTATION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=12, thread_name_prefix="inbox-consultation",
+)
 
 _PRIVATE_SCOPES = frozenset({
     "persona_private",
@@ -2121,6 +2131,83 @@ def _inbox_owner_budget():
         management_read_deadline.reset(token)
 
 
+def _read_inbox_consultation(tenant_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Read independent collections concurrently under one owner deadline.
+
+    Each worker has its own client (whose socket timeout is mutable) and a
+    copied request context. Late results cannot mutate the returned snapshot.
+    """
+    def read(name: str) -> Any:
+        client = MeetingsOwnerClient(tenant_id=tenant_id, actor_id="human-inbox")
+        result = (client.list_meetings(limit=100) if name == "list_meetings"
+                  else getattr(client, name)())
+        if remaining_management_read_budget() <= 0:
+            raise TimeoutError("consultation read deadline exceeded")
+        return result
+
+    results: Dict[str, Any] = {}
+    reads: Dict[str, Any] = {}
+    futures: Dict[str, Any] = {}
+    for name in ("list_meetings", "list_proposals", "get_catalogue"):
+        if not _INBOX_CONSULTATION_SLOTS.acquire(blocking=False):
+            reads[name] = {"status": "unavailable", "reason": f"owner_read_capacity_exhausted:{name}"}
+            continue
+        try:
+            future = submit_owner_read(_INBOX_CONSULTATION_EXECUTOR, lambda name=name: read(name))
+        except BaseException:
+            _INBOX_CONSULTATION_SLOTS.release()
+            raise
+        future.add_done_callback(lambda _future: _INBOX_CONSULTATION_SLOTS.release())
+        futures[name] = future
+    if futures:
+        done, _ = wait(futures.values(), timeout=remaining_management_read_budget())
+    else:
+        done = set()
+    for name, future in futures.items():
+        reason = None
+        status = "unavailable"
+        if future not in done:
+            future.cancel()
+            reason = f"read_timeout:{name}"
+        else:
+            try:
+                results[name] = future.result()
+            except (TimeoutError, MeetingsOwnerUnavailableError, MeetingsOwnerValidationError,
+                    MeetingsOwnerNotFoundError) as exc:
+                # The shared HTTP client wraps socket/URL timeouts twice. Keep
+                # that transport distinction local to the inbox read surface.
+                cause: Optional[BaseException] = exc
+                timed_out = False
+                while cause is not None:
+                    if isinstance(cause, TimeoutError) or getattr(cause, "reason", None) == "read_timeout":
+                        timed_out = True
+                        break
+                    if isinstance(cause, urllib.error.URLError) and isinstance(cause.reason, TimeoutError):
+                        timed_out = True
+                        break
+                    cause = cause.__cause__
+                reason = (f"read_timeout:{name}" if timed_out else
+                          f"{exc.reason}:{name}")
+                if getattr(exc, "status_code", None) in (401, 403):
+                    status = "denied"
+        reads[name] = {"status": status if reason else "ok", "reason": reason}
+
+    failures = [row["reason"] for row in reads.values() if row["reason"]]
+    denied = any(row["status"] == "denied" for row in reads.values())
+    if denied:
+        results.clear()
+    next_cursor = (results.get("list_meetings") or {}).get("next_cursor")
+    if next_cursor:
+        failures.append("owner_page_has_more")
+    return results, {
+        "status": ("denied" if denied else "degraded" if failures and results else
+                   "unavailable" if failures else "ok"),
+        "reason": ";".join(failures) or None,
+        "next_cursor": next_cursor,
+        "reads": reads,
+    }
+
+
 def read_human_inbox_meeting_items(
     snapshot_at: str,
     *,
@@ -2155,26 +2242,17 @@ def read_human_inbox_meeting_items(
     # Resolve from the authenticated caller, never the contributor service actor.
     if resolve_orchestrator_base_url():
         eff_tenant = verified_caller_tenant(tenant_id=tenant_id)
-    client = MeetingsOwnerClient(tenant_id=eff_tenant, actor_id="human-inbox")
     surfaces: Dict[str, Any] = {}
     items: List[Dict[str, Any]] = []
     # A partial owner failure must not hide work from a different owner.
     with _inbox_owner_budget():
-        try:
-            meetings_res = client.list_meetings(limit=100)
-            proposals_res = client.list_proposals()
-            catalogue_res = client.get_catalogue()
-            items.extend(project_human_inbox_meeting_items(
-                snapshot_at=snapshot_at, meetings=meetings_res.get("items") or [],
-                proposals=proposals_res.get("items") or [], catalogue=catalogue_res))
-            surfaces["consultation"] = {
-                "status": "degraded" if meetings_res.get("next_cursor") else "ok",
-                "reason": "owner_page_has_more" if meetings_res.get("next_cursor") else None,
-                "next_cursor": meetings_res.get("next_cursor"),
-            }
-        except (MeetingsOwnerUnavailableError, MeetingsOwnerValidationError, MeetingsOwnerNotFoundError) as exc:
-            surfaces["consultation"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
-                                        "reason": exc.reason}
+        results, surfaces["consultation"] = _read_inbox_consultation(eff_tenant)
+        items.extend(project_human_inbox_meeting_items(
+            snapshot_at=snapshot_at,
+            meetings=(results.get("list_meetings") or {}).get("items") or [],
+            proposals=(results.get("list_proposals") or {}).get("items") or [],
+            catalogue=results.get("get_catalogue") or {},
+        ))
     if resolve_orchestrator_base_url():
         with _inbox_owner_budget():
             try:

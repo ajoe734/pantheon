@@ -8,6 +8,8 @@ Verifies that ManagementService.get_human_inbox includes:
 from __future__ import annotations
 
 import io
+import threading
+from copy import deepcopy
 import json
 import time
 from typing import Any, Dict, List
@@ -28,6 +30,42 @@ from services.runtime_auth_inbound import encode_jwt_hs256
 
 SECRET = "meetings-human-inbox-r2-test-secret"
 SERVICE_TOKEN = "test-only-consultation-inbox-token"
+
+# Existing incident-shaped regression row; retained unchanged for budget tests.
+INCIDENT_MEETING = {
+    "meeting_id": "mtg-2c016da5651a0dc4",
+    "meeting_type": "MT-1",
+    "status": "closed",
+    "outcome": "REVIEW",
+    "chair_persona_id": "persona-2448c7053e33ea48da47",
+    "participants": [{"persona_id": "persona-2448c7053e33ea48da47", "role": "chair", "origin": "institutional"}],
+    "case_file_items": [
+        {"item_id": "facts:pool:persona-2448c7053e33ea48da47:v1"},
+        {"item_id": "secret-private-inbox-item", "scope": "private"},
+    ],
+    "rounds": [
+        {
+            "round": 1,
+            "positions": [
+                {
+                    "persona_id": "persona-2448c7053e33ea48da47",
+                    "is_private": True,
+                    "citations": ["secret-private-inbox-pos-ref"],
+                }
+            ],
+        }
+    ],
+    "synthesis": {
+        "proposals": [],
+        "outcome": "REVIEW",
+        "unreadable_reason": None,
+        "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+    },
+    "operator_review": None,
+    "round": 2,
+    "created_at": "2026-11-20T17:38:10Z",
+    "closed_at": "2026-11-20T17:40:52Z",
+}
 
 
 class _StubReadSurface:
@@ -280,40 +318,7 @@ def test_human_inbox_review_meeting_exposes_cause_and_evidence_and_leaves_pendin
 ):
     client, _service, state = inbox_meetings_stack
     state["meetings"] = [
-        {
-            "meeting_id": "mtg-2c016da5651a0dc4",
-            "meeting_type": "MT-1",
-            "status": "closed",
-            "outcome": "REVIEW",
-            "chair_persona_id": "persona-2448c7053e33ea48da47",
-            "participants": [{"persona_id": "persona-2448c7053e33ea48da47", "role": "chair", "origin": "institutional"}],
-            "case_file_items": [
-                {"item_id": "facts:pool:persona-2448c7053e33ea48da47:v1"},
-                {"item_id": "secret-private-inbox-item", "scope": "private"},
-            ],
-            "rounds": [
-                {
-                    "round": 1,
-                    "positions": [
-                        {
-                            "persona_id": "persona-2448c7053e33ea48da47",
-                            "is_private": True,
-                            "citations": ["secret-private-inbox-pos-ref"],
-                        }
-                    ],
-                }
-            ],
-            "synthesis": {
-                "proposals": [],
-                "outcome": "REVIEW",
-                "unreadable_reason": None,
-                "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
-            },
-            "operator_review": None,
-            "round": 2,
-            "created_at": "2026-11-20T17:38:10Z",
-            "closed_at": "2026-11-20T17:40:52Z",
-        },
+        deepcopy(INCIDENT_MEETING),
         {
             "meeting_id": "mtg-review-specific-02",
             "meeting_type": "MT-2",
