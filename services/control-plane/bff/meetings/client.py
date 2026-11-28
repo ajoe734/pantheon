@@ -36,6 +36,12 @@ _INBOX_CONSULTATION_SLOTS = threading.BoundedSemaphore(12)
 _INBOX_CONSULTATION_EXECUTOR = ThreadPoolExecutor(
     max_workers=12, thread_name_prefix="inbox-consultation",
 )
+# One Research GET per admitted inbox read, separate from consultation workers
+# so a stalled consultation pool cannot queue the other owner's read.
+_INBOX_RESEARCH_SLOTS = threading.BoundedSemaphore(4)
+_INBOX_RESEARCH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="inbox-research",
+)
 
 _PRIVATE_SCOPES = frozenset({
     "persona_private",
@@ -2118,13 +2124,15 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
 
 @contextmanager
 def _inbox_owner_budget():
-    # Each independent owner gets part of the existing contributor deadline;
-    # one slow source cannot consume the other source's entire read allowance.
+    # Both owners inherit this one absolute deadline. Parallel reads can use
+    # the former two 40% phases together, leaving 20% for inbox projection.
     from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
-    allowance = human_inbox_surface_timeout_seconds() * 0.4
-    remaining = remaining_management_read_budget(allowance)
-    budget = min(allowance, remaining) if remaining is not None else allowance
-    token = management_read_deadline.set(time.monotonic() + max(0, budget))
+    allowance = human_inbox_surface_timeout_seconds() * 0.8
+    deadline = time.monotonic() + allowance
+    parent_deadline = management_read_deadline.get()
+    if parent_deadline is not None:
+        deadline = min(deadline, parent_deadline)
+    token = management_read_deadline.set(deadline)
     try:
         yield
     finally:
@@ -2243,12 +2251,34 @@ def read_human_inbox_meeting_items(
     from services.control_plane.bff.research.client import ResearchServiceClient, ResearchCommandError, resolve_orchestrator_base_url
 
     # Resolve from the authenticated caller, never the contributor service actor.
-    if resolve_orchestrator_base_url():
+    research_configured = bool(resolve_orchestrator_base_url())
+    if research_configured:
         eff_tenant = verified_caller_tenant(tenant_id=tenant_id)
     surfaces: Dict[str, Any] = {}
     items: List[Dict[str, Any]] = []
     # A partial owner failure must not hide work from a different owner.
     with _inbox_owner_budget():
+        def read_research() -> Dict[str, Any]:
+            page = ResearchServiceClient().list_research_ticket_page(human_actionable=True, page_size=100)
+            if remaining_management_read_budget() <= 0:
+                raise TimeoutError("Research owner read deadline exceeded")
+            return page
+
+        research_future = None
+        if not research_configured:
+            surfaces["research"] = {"status": "unavailable", "reason": "research_owner_unconfigured"}
+        elif remaining_management_read_budget() <= 0:
+            surfaces["research"] = {"status": "unavailable", "reason": "read_timeout:list_research_ticket_page"}
+        elif not _INBOX_RESEARCH_SLOTS.acquire(blocking=False):
+            surfaces["research"] = {"status": "unavailable", "reason": "owner_read_capacity_exhausted:list_research_ticket_page"}
+        else:
+            try:
+                research_future = submit_owner_read(_INBOX_RESEARCH_EXECUTOR, read_research)
+            except BaseException:
+                _INBOX_RESEARCH_SLOTS.release()
+                raise
+            research_future.add_done_callback(lambda _future, slots=_INBOX_RESEARCH_SLOTS: slots.release())
+
         results, surfaces["consultation"] = _read_inbox_consultation(eff_tenant)
         items.extend(project_human_inbox_meeting_items(
             snapshot_at=snapshot_at,
@@ -2256,10 +2286,13 @@ def read_human_inbox_meeting_items(
             proposals=(results.get("list_proposals") or {}).get("items") or [],
             catalogue=results.get("get_catalogue") or {},
         ))
-    if resolve_orchestrator_base_url():
-        with _inbox_owner_budget():
+        if research_future is not None:
             try:
-                page = ResearchServiceClient().list_research_ticket_page(human_actionable=True, page_size=100)
+                done, _ = wait((research_future,), timeout=remaining_management_read_budget())
+                if research_future not in done:
+                    research_future.cancel()
+                    raise TimeoutError("Research owner read deadline exceeded")
+                page = research_future.result()
                 items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at,
                                                       identity=identity))
                 surfaces["research"] = {
@@ -2270,8 +2303,8 @@ def read_human_inbox_meeting_items(
             except ResearchCommandError as exc:
                 surfaces["research"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
                                         "reason": str(exc), "status_code": exc.status_code}
-    else:
-        surfaces["research"] = {"status": "unavailable", "reason": "research_owner_unconfigured"}
+            except TimeoutError:
+                surfaces["research"] = {"status": "unavailable", "reason": "read_timeout:list_research_ticket_page"}
     states = [s["status"] for s in surfaces.values()]
     return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if any(s in {"ok", "degraded"} for s in states) else "unavailable",
                    "source": "bff_composed", "snapshot_at": snapshot_at, "surfaces": surfaces}
