@@ -3,7 +3,7 @@
   "task_id": "COLLECTOR-HOST-PAUSED-SOURCES-NEVER-RESUME-20261128",
   "owner": "Codex",
   "reviewer": "Antigravity2",
-  "review_status": "pending_independent_review",
+  "review_status": "blocked_on_artifact_contract",
   "delivery_state": null,
   "base_sha": "c38cb75b6bbf77c8124675fd7956f7ebbc033534",
   "anchor_commit": "cd6e7b9c709330f2abb8a1349a0cabbafb1d78c3",
@@ -241,5 +241,14 @@
     "arxiv": "https://info.arxiv.org/help/api/tou.html",
     "openalex": "https://help.openalex.org/api/authentication/"
   },
-  "baseline_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003"
+  "baseline_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+  "pull_request": "https://github.com/ajoe734/pantheon/pull/8017",
+  "review_admission": {
+    "status": "rejected",
+    "attempted_head": "484e7279783a05ab4ddad93fde992a6034d05977",
+    "reason": "changed file 'docs/operations/storage-manifest.json' is outside the task artifact contract for repository 'pantheon'",
+    "required_actor": "Human/Ops",
+    "required_action": "While blocked, add docs/operations/storage-manifest.json via governed artifact-contract; reopen owner and repeat exact-head handoff. Only Human/Ops can revise contracts; active in_progress/review rows cannot be revised. No canonical files edited by worker.",
+    "why_file_required": "Repository runtime-budget rule requires registering the new persistent lock writers in the existing storage manifest."
+  }
 }
