@@ -10,7 +10,7 @@
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "fffd037e94287f1a91b42a14a9a9c2b7d24f3f7f5a0a6edd1422e22c96eb433f"
+    "sha256": "7636c91c8cfc44e38efb385428de8d7d2e6bf88d4419a5763fdead7f8442425b"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -41,6 +41,10 @@
     "agora.servant.habits.v1": [
       "GET /bff/agora/servant/habits",
       "PATCH /bff/agora/servant/habits"
+    ],
+    "agora.servant.clarify.v1": [
+      "POST /bff/agora/servant/sessions/{session_id}/messages",
+      "GET /bff/agora/servant/sessions/{session_id}/stream"
     ]
   },
   "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."

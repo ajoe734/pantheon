@@ -634,7 +634,7 @@
           }
         },
         "x-business-owner": "agora+source-ingest",
-        "description": "AGORA-SERVANT-DATA-TOOLS-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. Uncovered requests list the missing data. No persona or meeting is called."
+        "description": "AGORA-SERVANT-DATA-TOOLS-20261127 & AGORA-SERVANT-CLARIFY-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. When the trader's choice changes the data selected or the result, a turn may return at most one typed clarification card (WorkshopNextDecisionV114 shape) and at most two in a row before answering with stated assumptions. Trader choices are recorded as servant.clarification.answered session events, and style choices (horizon, universe, risk_tolerance) emit habit facts for AGORA-TRADER-HABIT-PROFILE-20261127. Uncovered requests list the missing data. No persona or meeting is called."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/stream": {
@@ -664,7 +664,7 @@
         ],
         "responses": {
           "200": {
-            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode).",
+            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode, clarification, cards, stated_assumptions) and servant.clarification.answered carries ServantClarificationAnsweredEventData.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -1311,14 +1311,10 @@
       "ServantMessageRequestV114": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "content"
-        ],
-        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127).",
+        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127) and optional clarification_choice (AGORA-SERVANT-CLARIFY-20261127).",
         "properties": {
           "content": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 4000
           },
           "attachment_refs": {
@@ -1331,6 +1327,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ServantCommandContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clarification_choice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkshopDecisionRequestV114"
               },
               {
                 "type": "null"
@@ -1490,6 +1496,7 @@
             "enum": [
               "model",
               "facts_only",
+              "clarification",
               "none",
               null
             ]
@@ -1498,6 +1505,237 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ServantTurnHabitRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clarification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkshopNextDecisionV114"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cards": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/WorkshopNextDecisionV114"
+            }
+          },
+          "stated_assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServantStyleHabitFactV114": {
+        "type": "object",
+        "required": [
+          "fact_id",
+          "id",
+          "kind",
+          "style_dimension",
+          "feature_key",
+          "target_block",
+          "decision_id",
+          "option_id",
+          "option_label",
+          "value",
+          "unit",
+          "source_id",
+          "owner",
+          "as_of",
+          "freshness"
+        ],
+        "properties": {
+          "fact_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "const": "trader_style_choice"
+          },
+          "style_dimension": {
+            "type": "string",
+            "enum": [
+              "horizon",
+              "universe",
+              "risk_tolerance"
+            ]
+          },
+          "feature_key": {
+            "type": "string",
+            "enum": [
+              "holding_period",
+              "rejected_candidates",
+              "position_size"
+            ]
+          },
+          "target_block": {
+            "type": "string",
+            "enum": [
+              "entry_holding",
+              "market_scope",
+              "sizing_leverage"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "option_id": {
+            "type": "string"
+          },
+          "option_label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "used_servant_default": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string",
+            "const": "agora"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "freshness": {
+            "type": "string",
+            "const": "fresh"
+          },
+          "query_hash": {
+            "type": "string"
+          },
+          "cited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServantClarificationAnsweredEventData": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "message_id",
+          "event_type",
+          "decision_id",
+          "question_id",
+          "question",
+          "option_id",
+          "option_label",
+          "used_servant_default",
+          "resolves",
+          "target_blocks"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string",
+            "const": "servant.clarification.answered"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "question_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "response_kind": {
+            "type": "string",
+            "enum": [
+              "option",
+              "freeform"
+            ]
+          },
+          "option_id": {
+            "type": "string"
+          },
+          "option_label": {
+            "type": "string"
+          },
+          "used_servant_default": {
+            "type": "boolean"
+          },
+          "resolves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_blocks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "style_dimension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "horizon",
+              "universe",
+              "risk_tolerance",
+              null
+            ]
+          },
+          "habit_fact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServantStyleHabitFactV114"
               },
               {
                 "type": "null"
