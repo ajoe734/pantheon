@@ -7276,6 +7276,8 @@ if args[:1] == ["inspect"]:
     if "{{.State.OOMKilled}}" in fmt:
         print(os.environ.get("FAKE_OOM", "false")); sys.exit(0)
     sys.exit(0)
+if args[:2] == ["image", "inspect"]:
+    print("sha256:" + {img_sha!r}); sys.exit(0)
 if args[:1] in (["stop"], ["start"], ["rm"]):
     sys.exit(0)
 if args[:1] == ["ps"]:

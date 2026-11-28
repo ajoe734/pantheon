@@ -13,6 +13,7 @@
       "status": "verified_in_source",
       "decision": "Operator decision 2026-11-27: KEYED_DATASETS['tw_broker_top'] returns to retention_days=750 (calendar days as in the SD 6A row and every other keyed dataset); the session-count field on DatasetKeyDeclaration and the session-count branch in RetentionSweeper._plan_keyed (services/source_ingestion/retention.py) are removed; services/source_ingestion/tests/test_broker_session_retention.py is deleted; retention.py keeps one calendar-day rule.",
       "tests": [
+        "services/source_ingestion/tests/test_datasets_keyed_write.py::test_retention_is_declared_next_to_the_key_as_in_section_6a",
         "services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window",
         "services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_declared_day_budget_holds_a_hosted_shaped_whole_market_session"
@@ -117,7 +118,8 @@
       "docs/operations/problem-register.md",
       "docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json",
       "docs/deployment/evidence/SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127/evidence.json",
-      "docs/deployment/evidence/SOURCE-BROKER-RETENTION-DAYS-AND-BACKFILL-GUARD-20261127/evidence.json"
+      "docs/deployment/evidence/SOURCE-BROKER-RETENTION-DAYS-AND-BACKFILL-GUARD-20261127/evidence.json",
+      "services/source_ingestion/tests/test_datasets_keyed_write.py"
     ],
     "not_changed": [
       "services/source_ingestion/connectors/finmind_taiwan.py",
@@ -125,24 +127,18 @@
       ".github/workflows/dev-tw-market-refresh.yml"
     ]
   },
-  "residual_findings": [
-    {
-      "file": "services/source_ingestion/tests/test_datasets_keyed_write.py",
-      "line": 269,
-      "finding": "Commit 0e8b6a927 (PR #7954) changed test_retention_is_declared_next_to_the_key_as_in_section_6a() in services/source_ingestion/tests/test_datasets_keyed_write.py from 'tw_broker_top': 750 to 'tw_broker_top': None. Now that KEYED_DATASETS['tw_broker_top'].retention_days is restored to 750 per Acceptance 1, services/source_ingestion/tests/test_datasets_keyed_write.py needs to be in the task artifact contract so line 269 can be restored to 'tw_broker_top': 750 before Smoke acceptance runs ci_source_ingestion_test_shards.py."
-    }
-  ],
+  "residual_findings": [],
   "verification": {
     "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py (Python 3.12.3, pyarrow 26.0.1)",
     "commands": [
       {
-        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
-        "result": "48 passed in 56.30s",
+        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "result": "91 passed in 77.73s",
         "exit_status": 0
       },
       {
         "cmd": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_finmind_broker_backfill_workflow.py scripts/test_deploy_nonprod_vm.py -k 'broker_backfill or whole_market or market_open_guard or workflow'",
-        "result": "31 passed, 224 deselected in 14.22s",
+        "result": "31 passed, 232 deselected in 14.98s",
         "exit_status": 0
       },
       {
