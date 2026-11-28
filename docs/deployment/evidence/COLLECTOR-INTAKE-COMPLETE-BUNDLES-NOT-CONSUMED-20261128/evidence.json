@@ -2,7 +2,7 @@
   "task_id": "COLLECTOR-INTAKE-COMPLETE-BUNDLES-NOT-CONSUMED-20261128",
   "owner": "Codex2",
   "reviewer": "Antigravity2",
-  "delivery_state": "source in progress; not merged, deployed or accepted",
+  "delivery_state": "source ready for independent review; not merged, deployed or accepted",
   "reproduction": {
     "captured_at": "2026-11-28T03:58:25.752695+00:00",
     "host": "165-232-172-111.sslip.io",
@@ -118,7 +118,68 @@
           }
         ]
       }
-    ]
+    ],
+    "full_pull_readonly": {
+      "method": "Hosted CollectorBundleAdapter.pull with actual stored cursor and actual HttpBundleTransport. _write_raw replaced with no-op; deferred_collector_acknowledgement enabled, returned acknowledgement never invoked. Only transport/verify and feature planning run.",
+      "hosted_container_image": "pantheon-source-ingest {\"com.docker.compose.config-hash\":\"5ebffb86c04e9283a2a4848b60ba30d15337c4dd65a3974c0429aacb0a001c9b\",\"com.docker.compose.container-number\":\"1\",\"com.docker.compose.depends_on\":\"postgres:service_healthy:false\",\"com.docker.compose.image\":\"sha256:5fab0848e4f045d112f7742682faf5297c1a7c7251506f98db2b72900a521b9a\",\"com.docker.compose.oneoff\":\"False\",\"com.docker.compose.project\":\"pantheon\",\"com.docker.compose.project.config_files\":\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root/docker-compose.yml,/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/baseline-46102871850-1-33d26a8fbb36f73f9a4e967f6f80e552eda18489cc30ee372a0b8dbd917a4c83/candidate-images.override.json\",\"com.docker.compose.project.working_dir\":\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root\",\"com.docker.compose.replace\":\"source-ingest-1\",\"com.docker.compose.service\":\"source-ingest\",\"com.docker.compose.version\":\"2.40.3\"}",
+      "result": [
+        {
+          "source": "collector-tw-threads",
+          "input_cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+          "next_cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+          "raw_count": 0,
+          "bundle_count": 1,
+          "complete": false,
+          "no_new_data": false,
+          "observed": {
+            "health_state": "degraded",
+            "reasons": [
+              "collector_complete_boundary_unverified",
+              "cursor_lag_over_7_days"
+            ],
+            "freshness": {
+              "collector_last_run_at": "2026-11-28T00:16:28Z",
+              "cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+              "cursor_lag_days": 16.81,
+              "cadence_seconds": 86400
+            },
+            "last_run": {
+              "collector_status": "complete",
+              "paused_reason": null
+            }
+          },
+          "acknowledgement_called": false
+        },
+        {
+          "source": "collector-tw-ptt-stock",
+          "input_cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+          "next_cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+          "raw_count": 0,
+          "bundle_count": 1,
+          "complete": false,
+          "no_new_data": false,
+          "observed": {
+            "health_state": "degraded",
+            "reasons": [
+              "collector_complete_boundary_unverified",
+              "cursor_lag_over_7_days"
+            ],
+            "freshness": {
+              "collector_last_run_at": "2026-11-28T00:17:53Z",
+              "cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+              "cursor_lag_days": 9.251,
+              "cadence_seconds": 86400
+            },
+            "last_run": {
+              "collector_status": "complete",
+              "paused_reason": null
+            }
+          },
+          "acknowledgement_called": false
+        }
+      ],
+      "exact_stop": "_pull_ordered: after verify_bundle, _resolve_partial_bundle returns None for source_type=social; bundle.status in {paused, partial} sets unverified_pending=True and breaks before every newer complete bundle."
+    }
   },
   "cause": "_pull_ordered verifies the cursor partial bundle then stops at status partial. _resolve_partial_bundle only resolves market price history. Threads is stuck behind six initial empty parse_zero attempts; PTT behind empty fetch_failed attempts. Newest complete Threads/PTT and Instagram files verify through hosted HttpBundleTransport, including every raw hash; file modes are 600 for manifests, 644 for items.",
   "resolution_contract": "Reuse _resolve_partial_bundle for these two social pollers only. Empty failed attempts (parse_zero/fetch_failed) may be traversed after a later nonempty complete same-source poll is verified. This records recovery of a failed attempt, never proof that the failed poll had no data. Nonempty partials, paused bundles, other reasons and sources retain the existing stop. No unverified raw row is acknowledged.",
@@ -132,7 +193,27 @@
       "command": "timeout 90 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py -k 'real_failed_attempts or instagram_control'",
       "exit_status": 1,
       "result": "2 failed, 1 passed: Threads/PTT result.records == (), cursor unchanged at |items=0; Instagram passes."
-    }
+    },
+    "focused": {
+      "command": "timeout 90 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py services/source_ingestion/tests/test_collector_partial_bundle_resolution.py",
+      "exit_status": 0,
+      "result": "34 passed in 5.56s"
+    },
+    "full_collector_suite": {
+      "command": "timeout 180 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py services/source_ingestion/tests/test_collector_partial_bundle_resolution.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py",
+      "exit_status": 0,
+      "result": "261 passed, 4 skipped in 96.81s; all foreground terminal output and exit status collected."
+    },
+    "storage_manifest": {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_status": 0,
+      "result": "passed; 380 entries, 0 failures; no new writers"
+    },
+    "whitespace": {
+      "command": "git diff --check",
+      "exit_status": 0
+    },
+    "coverage": "Original real-file layout/modes; original hosted partial cursors; reversed index ordering; full and capped scheduler delivery through real provider/fetcher/scheduler; nonempty partial/paused/unknown reason/other-source/other-type barriers; corrupt successor metadata/raw refusal; unchanged no-new-data proof including PTT governed-feature residual; read-only hosted probe false-positive guards."
   },
   "runtime_budget": {
     "new_writers": 0,
