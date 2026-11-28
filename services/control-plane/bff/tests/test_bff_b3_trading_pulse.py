@@ -1474,6 +1474,136 @@ def _measure_crawl_reads(surface, **scale):
                             for name, values in sorted(store.samples.items())}}
 
 
+@pytest.mark.parametrize("surface", ["get_trading_pulse", "get_trading_pulse_rankings"])
+def test_crawl_reads_match_frozen_before_payload_and_do_not_scale_with_history(surface):
+    import json
+    from pathlib import Path
+    evidence = json.loads((Path(__file__).resolve().parents[4] / _PULSE_EVIDENCE).read_text())
+    before = evidence["before_payloads"][surface]
+    expected_counts = None
+    for scale in (1, 20):
+        body, measured = _measure_crawl_reads(surface, retired_copies=scale, telemetry_copies=scale)
+        # Full recursive dict/list equality compares every field, not a digest
+        # or a selected set of DTO fields. Snapshot time is fixed in both runs.
+        assert body == before
+        scope = body["data"]["summary"]["operator_scope"]
+        assert scope["persona_count"] == scope["runtime_count"] == 3
+        assert scope["excluded_non_trading_runtime_count"] == 1
+        counts = {name: read["count"] for name, read in measured["reads"].items()}
+        assert counts["get_rollbacks"] == 1 < evidence["before"][surface]["reads"]["get_rollbacks"]["count"]
+        for name in ("list_runtime_bindings", "list_telemetry_summaries",
+                     "list_paper_runtime_monitoring_sessions", "list_personas",
+                     "persona.get_surface_status", "persona.owner_read", "runtime.owner_read"):
+            assert counts[name] == 1
+        # dataset_source also inspects runtime status; both reuse one owner read.
+        assert counts["runtime.get_surface_status"] == 2
+        assert counts["get_strategy_spec_detail"] == 3
+        assert counts["_project_operator_runtime_state_row"] == 3
+        assert counts["_build_trading_pulse_baseline_comparison"] == 3
+        assert counts.get("page_journeys", 0) == (3 if surface == "get_trading_pulse" else 0)
+        assert counts.get("list_paper_live_drift_reports", 0) == 0
+        assert counts.get("get_telemetry_summary", 0) == 0
+        assert counts.get("get_paper_runtime_monitoring_session", 0) == 0
+        assert counts.get("get_paper_live_drift_report", 0) == 0
+        if expected_counts is not None:
+            assert counts == expected_counts
+        expected_counts = counts
+
+
+def test_crawl_source_reads_overlap_and_keep_request_context(monkeypatch):
+    import threading
+    from services.control_plane.bff.core.owner_reads import request_read_scope, request_read_cache, selected_tenant
+    store = _crawl_read_fixture()
+    raw = store._target
+    gate = threading.Barrier(3)
+    seen = []
+    with request_read_scope():
+        cache = request_read_cache.get()
+        def rendezvous(call):
+            def read(*args, **kwargs):
+                seen.append((selected_tenant.get(), request_read_cache.get() is cache))
+                # This is a deadlock guard, not a performance acceptance limit.
+                gate.wait(timeout=5)
+                return call(*args, **kwargs)
+            return read
+        pcr = raw.persona_capital_runtime
+        monkeypatch.setattr(pcr.runtime, "_runtime_bindings_provider", rendezvous(pcr.runtime._runtime_bindings_provider))
+        for name in ("list_telemetry_summaries", "list_paper_runtime_monitoring_sessions"):
+            monkeypatch.setattr(raw, name, rendezvous(getattr(raw, name)))
+        body = ManagementService(read_store=store).get_trading_pulse(snapshot_at=_CRAWL_SNAP)
+    assert len(seen) == 3 and all(value == ("tenant-test", True) for value in seen)
+    assert body["data"]["summary"]["runtime_count"] == 3
+    assert body["data"]["summary"]["telemetry_coverage_count"] == 3
+
+
+@pytest.mark.parametrize("surface", ["get_trading_pulse", "get_trading_pulse_rankings"])
+def test_crawl_enrichment_overlaps_without_reading_excluded_identities(surface, monkeypatch):
+    import threading
+    store = _crawl_read_fixture()
+    raw = store._target
+    gate = threading.Barrier(3)
+    seen = []
+    original = raw.get_strategy_spec_detail
+    def strategy(sid, **kwargs):
+        seen.append(sid)
+        gate.wait(timeout=5)
+        return original(sid, **kwargs)
+    monkeypatch.setattr(raw, "get_strategy_spec_detail", strategy)
+    body = getattr(ManagementService(read_store=store), surface)(snapshot_at=_CRAWL_SNAP)
+    assert set(seen) == {"strategy-0", "strategy-1", "strategy-2"}
+    assert body["data"]["summary"]["runtime_count"] == 3
+    payload_rows = body["data"].get("runtime_rows", [])
+    assert all(row["strategy_name"] == row["strategy_id"] for row in payload_rows)
+
+
+@pytest.mark.parametrize("failure", ["roster", "telemetry", "rollback", "strategy", "journey"])
+def test_crawl_read_failure_preserves_other_sources(failure, monkeypatch):
+    store = _crawl_read_fixture()
+    raw = store._target
+    def fail(*args, **kwargs):
+        raise OSError("owner unavailable")
+    if failure == "roster":
+        monkeypatch.setattr(raw.persona_capital_runtime.persona, "_records_provider", fail)
+    elif failure == "telemetry":
+        monkeypatch.setattr(raw, "list_telemetry_summaries", fail)
+    elif failure == "rollback":
+        monkeypatch.setattr(raw.lifecycle_telemetry_governance.governance, "read_rollbacks_strict", fail)
+    elif failure == "strategy":
+        monkeypatch.setattr(raw, "get_strategy_spec_detail", fail)
+    else:
+        monkeypatch.setattr(raw._trade_journey_projection_reader_override, "page_journeys", fail)
+    body = ManagementService(read_store=store).get_trading_pulse(snapshot_at=_CRAWL_SNAP)
+    summary = body["data"]["summary"]
+    if failure == "roster":
+        assert summary["operator_scope"]["status"] == "unavailable"
+        assert body["data"]["runtime_rows"] == []
+        assert "get_rollbacks" not in store.samples
+    else:
+        assert summary["runtime_count"] == 3
+        assert summary["telemetry_coverage_count"] == (0 if failure == "telemetry" else 3)
+        if failure == "rollback":
+            assert all(row["rollback_summary"]["count"] == 0 for row in body["data"]["runtime_rows"])
+        elif failure == "strategy":
+            assert all(row["strategy_name"] is None for row in body["data"]["runtime_rows"])
+        elif failure == "journey":
+            assert all(row["latest_outcome"]["status"] == "unavailable" for row in body["data"]["runtime_rows"])
+
+
+def test_crawl_expired_deadline_fails_closed_without_owner_reads():
+    from time import monotonic
+    from services.control_plane.bff.core.owner_reads import management_read_deadline
+    store = _crawl_read_fixture()
+    token = management_read_deadline.set(monotonic() - 1)
+    try:
+        body = ManagementService(read_store=store).get_trading_pulse(snapshot_at=_CRAWL_SNAP)
+    finally:
+        management_read_deadline.reset(token)
+    assert body["data"]["runtime_rows"] == []
+    assert body["data"]["summary"]["operator_scope"]["status"] == "unavailable"
+    assert "runtime.owner_read" not in store.samples
+    assert "persona.owner_read" not in store.samples
+
+
 if __name__ == "__main__":
     import json
     from services.control_plane.bff.core.owner_reads import selected_tenant
