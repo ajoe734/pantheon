@@ -299,6 +299,30 @@ def test_postgres_hosted_payloads_identical(pg_ledger, monkeypatch, tmp_path):
         assert (ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW), _payloads(clients)) == baseline
 
 
+def test_postgres_first_start_upgrades_existing_ledger_before_directory_reads(
+    pg_ledger, monkeypatch, tmp_path,
+):
+    import psycopg
+    store, rows = pg_ledger
+    clients = _wire(monkeypatch, store, rows, tmp_path)
+    baseline = ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW), _payloads(clients)
+    # Recreate the pre-deploy database shape: populated ledger, no stamp objects.
+    with psycopg.connect(store.dsn) as conn:
+        conn.execute(f"DROP TRIGGER persona_provisioning_revision ON {store.table}")
+        conn.execute(f"DROP FUNCTION {store.table}_advance_revision()")
+        conn.execute(f"DROP TABLE {store.table}_revision")
+        assert conn.execute("SELECT to_regclass(%s)", (f"{store.table}_revision",)).fetchone() == (None,)
+    # Production constructs this store synchronously before exposing it to reads.
+    upgraded = PostgresPersonaProvisioningStore(store.dsn, schema=store.schema)
+    clients = _wire(monkeypatch, upgraded, rows, tmp_path)
+    for _ in range(2):
+        assert (ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW), _payloads(clients)) == baseline
+    with psycopg.connect(store.dsn) as conn:
+        assert conn.execute(f"SELECT revision FROM {store.table}_revision WHERE singleton").fetchone() == (0,)
+        conn.execute(f"UPDATE {store.table} SET current_step='first_post_upgrade_write'")
+    assert all(r.current_step == "first_post_upgrade_write" for r in upgraded.list_for_directory(TENANT))
+
+
 def test_postgres_each_write_visible_next_read_and_timestamp_unchanged_sql(pg_ledger):
     import psycopg
     store, _ = pg_ledger

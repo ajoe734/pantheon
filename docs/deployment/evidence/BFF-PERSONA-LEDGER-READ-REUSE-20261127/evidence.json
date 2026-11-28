@@ -2,7 +2,7 @@
   "task_id": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
   "owner": "Codex",
   "reviewer": "Antigravity",
-  "state": "blocked_required_legacy_test_artifacts",
+  "state": "legacy_contract_repaired_local_validation_passed",
   "delivery": {
     "merged": false,
     "deployed": false,
@@ -15,7 +15,8 @@
     "mechanism": "Singleton transactional bigint revision updated by an AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE statement trigger catches every committed statement, even unchanged updated_at and direct SQL from another connection. Every cache call reads that one revision; cold rows and stamp share REPEATABLE READ READ ONLY snapshot. A concurrent commit is visible on the next call, rollback changes neither visible stamp nor rows. Query errors propagate; no TTL/stale-on-error answer. Fresh get/get_by_persona/list_by_tenant/list_all remain uncached.",
     "cache": "Store-local full row inputs, detached deep copies, LRU 8 keys / 32 MiB per key / 64 MiB retained recursive object budget; no cross-service helper was suitable because Registry cache relies on its own stored summary_rev/index/delta model.",
     "fleet": "_persona_provisioning_records_shared now uses full-input stamp validation rather than lossy slim SQL; request sharing is kept. Legacy slim methods remain callable, but this reader no longer selects them.",
-    "pending": "Task author must expand artifact contract for required legacy tests, then resume this same task/branch for fixture/expectation updates, broader failure triage, current-dev integration, fresh CI and independent exact-head review. No review handoff, merge, hosted deployment or acceptance claimed."
+    "pending": "Legacy test artifacts authorized 2026-11-28 and repaired on the same branch; 118 legacy/reconciliation checks and 9 hosted-shape/local Postgres checks pass. Current-dev integration, fresh CI and independent exact-head review remain. No merge, hosted deployment or acceptance claimed.",
+    "first_deploy_startup": "PostgresPersonaProvisioningStore.__init__ synchronously calls _bootstrap before returning the store. On the first BFF start against the old populated ledger, CREATE TABLE IF NOT EXISTS creates the revision table, INSERT establishes its singleton, and CREATE OR REPLACE FUNCTION/TRIGGER installs transactional invalidation before the first directory read. All bootstrap statements commit together on context exit; failure prevents store construction rather than answering with an unvalidated cache. No separate prior migration run is required. test_postgres_first_start_upgrades_existing_ledger_before_directory_reads removes the revision table/function/trigger from a real 170-row local Postgres ledger, reconstructs the store, compares cold/warm snapshot and both HTTP payloads with the full baseline (HTTP 200), and verifies the first post-upgrade write invalidates the warmed cache. Hosted role/schema ownership and CREATE privilege are task-author read-only facts, not worker verification."
   },
   "fleet_projection_audit": {
     "actual_differing_metadata_fields": [
@@ -102,9 +103,48 @@
       "command": "timeout --signal=INT 30 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_main_residue.py::test_composed_app_paths_reach_the_same_read_and_command_stores --disable-warnings --tb=short",
       "exit_code": 0,
       "result": "1 passed, 2 warnings in 5.70s; composed-app identity failure does not reproduce standalone."
+    },
+    {
+      "command": "timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "118 passed, 3 warnings in 25.68s"
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=postgresql://postgres@127.0.0.1:32813/postgres timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "9 passed, 3 warnings in 16.45s; includes real PostgreSQL first-start upgrade with missing revision objects"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output /tmp/bff-ledger-reuse-storage-check-20261128.json",
+      "exit_code": 0,
+      "result": "381 entries, passed=true, no failures"
     }
   ],
-  "test_changes": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit. Following the corrected brief, enrich only one of 170 rows with all three risk keys (hosted currently has none), name the absent-owner row explicitly and compare full fleet and directory snapshots. Storage/text fixture now adds repeated receipt text to distinct per-row inputs: measured 5,874,566 bytes stored references / 18,598,107 bytes JSON text (~17.74 MiB), instead of the earlier ~5.4 MB text-only fixture. Only the new test fixture/size assertion changed; no existing regression assertion weakened.",
+  "test_changes": {
+    "initial_implementation_history": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit. Following the corrected brief, enrich only one of 170 rows with all three risk keys (hosted currently has none), name the absent-owner row explicitly and compare full fleet and directory snapshots. Storage/text fixture now adds repeated receipt text to distinct per-row inputs: measured 5,874,566 bytes stored references / 18,598,107 bytes JSON text (~17.74 MiB), instead of the earlier ~5.4 MB text-only fixture. Only the new test fixture/size assertion changed; no existing regression assertion weakened.",
+    "authorized_legacy_changes_20261128": [
+      {
+        "file": "services/control-plane/bff/test_persona_provisioning_readback.py",
+        "assertion_change": "Replace test_shared_fleet_ledger_read_prefers_slim_reader_and_falls_back_to_full with test_shared_fleet_ledger_read_checks_stamp_and_falls_back_to_full.",
+        "justification": "Corrected AC4 explicitly accepts full-input stamp reuse. Preserve the slim reader's efficiency guarantee using the real Postgres store and hosted-shape SQL boundary: tenant and all-tenant calls return every full record; unchanged stamp performs only transaction setup plus exactly one stamp SELECT (no full-row SELECT); changed stamp performs one stamp SELECT and one full-row SELECT, sees changed receipt without updated_at changing, then reuses it on the next call. Legacy store fallback assertion is unchanged. Both lossy methods are forbidden in this test. No business-readback assertion elsewhere in the file changes."
+      },
+      {
+        "file": "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py",
+        "assertion_change": "No existing assertion changed. Shared SQL tracker now returns its revision for the revision SELECT and advances it for each simulated INSERT/UPDATE/DELETE/TRUNCATE of the ledger, including no-op statements; new parametrized tests verify repeated advancement.",
+        "justification": "The production reader must validate each cached result against a fresh stamp; tracker returning None previously incorrectly modeled an absent singleton and caused truthful 503. Neither stamp validation nor the actual cache is bypassed. Existing zero-write, orphan skip, transient retry and canonical reconciliation assertions remain intact."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+        "assertion_change": "None; byte unchanged.",
+        "justification": "Imports the repaired shared tracker; all existing assertions pass without edits."
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py",
+        "assertion_change": "Added real PostgreSQL first-start upgrade regression only; existing assertions unchanged.",
+        "justification": "Proves synchronous bootstrap upgrades the pre-deploy table before directory/strategy/Persona reads, using all 170 hosted-shape rows and confirming post-upgrade write invalidation."
+      }
+    ]
+  },
   "runtime_budget": {
     "cache": "Measured 19,666,289 retained recursive object bytes for one 170-row tenant, one entry. At most 8 keys, 32 MiB per entry / 64 MiB retained objects per store; identical all-tenant entry can duplicate this size. No append growth: about five changed ledger rows/day from dispatch replaces affected cache inputs on next stamped read; LRU and oversized bypass bound growth. Transient query and detached response allocations are separate; full before/after RSS recorded above.",
     "jobs_added": 0,
@@ -279,6 +319,8 @@
       140783785028,
       140783785017,
       140783785085
-    ]
+    ],
+    "resolved": true,
+    "resolution": "Task author expanded all three legacy test artifact paths and reopened this task 2026-11-28 03:41Z; governed show confirmed in_progress, Codex/Antigravity, no declared dependencies."
   }
 }
