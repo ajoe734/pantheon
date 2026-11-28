@@ -686,9 +686,8 @@ class SourceIngestionRuntime:
         self._evidence_pg_initialized_repo_id: int | None = None
         self._evidence_pg_last_append_id: int = 0
         self._evidence_pg_last_count: int = 0
-        self._evidence_pg_cached_key: Any | None = None
-        self._evidence_pg_cached_records: tuple[SourceRecord, ...] = ()
         self._latest_record_cache_key: Any | None = None
+        self._latest_record_cache_records: tuple[SourceRecord, ...] = ()
         self._latest_record_cache_value: dict[str, SourceRecord] = {}
         self._cached_dlq_summary_key: Any | None = None
         self._cached_dlq_summary_value: dict[str, Any] | None = None
@@ -2018,20 +2017,7 @@ class SourceIngestionRuntime:
             except Exception:
                 return tuple(repo.list_source_records())
 
-        last_obj = next(reversed(repo._source_records.values()), None) if repo._source_records else None
-        tuple_key = (
-            id(repo),
-            self._evidence_pg_last_append_id,
-            self._evidence_pg_last_count,
-            len(repo._source_records),
-            id(last_obj),
-        )
-        if self._evidence_pg_cached_key == tuple_key:
-            return self._evidence_pg_cached_records
-        records_tuple = tuple(repo._source_records.values())
-        self._evidence_pg_cached_key = tuple_key
-        self._evidence_pg_cached_records = records_tuple
-        return records_tuple
+        return tuple(repo._source_records.values())
 
     def _latest_source_record_by_connector(
         self,
@@ -2069,12 +2055,11 @@ class SourceIngestionRuntime:
                         latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
 
         records = self._sync_and_list_source_records()
-        last_rec_obj = records[-1] if records else None
+        record_ids_key = tuple(id(record) for record in records)
         all_runs_key = tuple(sorted(latest_run_by_connector.items()))
         full_cache_key = (
             id(self.evidence_repository),
-            len(records),
-            id(last_rec_obj),
+            record_ids_key,
             all_runs_key,
             frozenset(active_symbols),
         )
@@ -2134,6 +2119,7 @@ class SourceIngestionRuntime:
         result = {cid: item[1] for cid, item in latest.items()}
         with self._registry_cache_lock:
             self._latest_record_cache_key = full_cache_key
+            self._latest_record_cache_records = records
             self._latest_record_cache_value = dict(result)
         if target_cids is None:
             return result
@@ -2300,8 +2286,8 @@ class SourceIngestionRuntime:
         controller_state = read_controller_state(self.CONTROLLER_STATE_PATH)
         requirement_snapshot = self.requirement_snapshot_store.latest
         dlq_summary = self._dlq_readback_summary()
-        if hasattr(self.evidence_repository, "_source_records") and self._evidence_pg_cached_key is not None:
-            source_record_count = len(self._evidence_pg_cached_records)
+        if hasattr(self.evidence_repository, "_source_records"):
+            source_record_count = len(self.evidence_repository._source_records)
         else:
             source_record_count = len(self._sync_and_list_source_records())
         return {

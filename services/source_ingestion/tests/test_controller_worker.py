@@ -4568,4 +4568,73 @@ def test_stored_instrument_authority_detects_existing_run_file_append_without_di
     assert after == {"2317": ("2317.TWSE",), "2330": ("2330.TWSE",)}
 
 
+def test_latest_source_record_observes_non_tail_replacement_with_unchanged_length_and_new_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 non-tail SourceRecord replacement regression:
+    Replacing an existing non-tail SourceRecord via add_source_record leaves repository length
+    and tail record identity unchanged; both _sync_and_list_source_records() and
+    _latest_source_record_by_connector() must observe the replacement immediately and when
+    the latest completed run advances to run-2.
+    """
+    from unittest.mock import patch
+    from services.knowledge.evidence import InMemoryEvidenceRepository
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    data_dir = tmp_path / "non-tail-update"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    repo = InMemoryEvidenceRepository()
+    original = SourceRecord.from_dict(
+        {
+            "source_id": "first",
+            "connector_id": "collector-tw-cmoney-forum",
+            "source_type": "social",
+            "title": "old",
+            "content_ref": "https://example.test/first",
+            "status": "normalized",
+            "trace_id": "t1",
+            "created_at": "2026-11-27T07:00:00Z",
+            "metadata": {"source_ingest_run_id": "run-1"},
+        }
+    )
+    tail = replace(original, source_id="tail", connector_id="other")
+    repo.add_source_record(original)
+    repo.add_source_record(tail)
+
+    monkeypatch.setattr(rt_mod, "build_source_evidence_repository", lambda _path: repo)
+    runtime = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    runtime.snapshot_universe.stop_background_sweeps()
+
+    latest_run = {"collector-tw-cmoney-forum": "run-1"}
+    monkeypatch.setattr(
+        runtime,
+        "_grouped_freshness_snapshot",
+        lambda: {"latest_completed_run_id_by_connector": latest_run},
+    )
+    with patch.object(rt_mod, "_active_contract_symbols", return_value=set()):
+        first_read = runtime._latest_source_record_by_connector()
+        assert first_read["collector-tw-cmoney-forum"] is original
+        assert first_read["other"] is tail
+
+        # Non-tail replacement within the same run (unchanged length and tail identity)
+        same_run_updated = replace(original, title="updated-in-run-1")
+        repo.add_source_record(same_run_updated)
+        assert len(repo._source_records) == 2
+        assert next(reversed(repo._source_records.values())) is tail
+        same_run_read = runtime._latest_source_record_by_connector()
+        assert same_run_read["collector-tw-cmoney-forum"] is same_run_updated
+
+        # Non-tail replacement with new completed run-2 (unchanged length and tail identity)
+        updated = replace(original, title="updated", metadata={"source_ingest_run_id": "run-2"})
+        repo.add_source_record(updated)
+        latest_run["collector-tw-cmoney-forum"] = "run-2"
+        second_read = runtime._latest_source_record_by_connector()
+        assert second_read["collector-tw-cmoney-forum"] is updated
+        assert second_read["collector-tw-cmoney-forum"].title == "updated"
+        assert second_read["collector-tw-cmoney-forum"].metadata.get("source_ingest_run_id") == "run-2"
+
+
+
 
