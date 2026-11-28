@@ -1261,13 +1261,17 @@ Read-only; no new route. These fields extend the existing `GET /bff/management/p
 
 `subject.asset_class` of a projected trading-room decision event follows the chosen instrument kind (`cash_share` -> `equity`, `stock_future` -> `future`); a decision with no instrument stays `equity`, and an unknown kind is rejected instead of being labelled equity.
 
-## Retire a provisioned paper Persona case (BFF-PERSONA-CASE-RETIRE-COMMAND-20261108)
+## Retire a paper Persona case or a never-provisioned Persona
 
 `POST /bff/v1/commands` with `command: "PersonaAction"`, `action: "RetirePaperPersonaCase"` (verb aliases `retire`, `retire_case`) and `target: {"type": "Persona", "id": "<persona_id>"}`. No new HTTP route is added; `POST /bff/personas/{persona_id}/actions/{action_id}` returns `404 RESOURCE_NOT_FOUND` for `retire` and any other unsupported action name (only AdvanceLifecycle, Promote, PromoteCandidate and Demote are live on that route).
 
 Admission is the existing command admission: operator role, `Idempotency-Key` header, non-empty `audit_context.reason`, and an `X-Confirm-Token` issued for `RetirePaperPersonaCase` on that Persona (the catalog entry has `requires_confirm_token`). The tenant is taken from the authenticated claims only.
 
-Execution calls the existing `retire_persona_provisioning_case(tenant_id, persona_id, reason=audit_context.reason)`; the coordinator owns every retirement step (schedule, compensation, saga, runtime bindings, persona capital binding, pool, persona archive).
+For a Persona with a provisioning ledger, execution calls the existing `retire_persona_provisioning_case(tenant_id, persona_id, reason=audit_context.reason)`; the coordinator owns every retirement step (schedule, compensation, saga, runtime bindings, persona capital binding, pool, persona archive).
+
+With no provisioning ledger, execution reads the authoritative Persona lifecycle using the caller's authorization and tenant. Only `draft`, `research_only`, and `frozen` qualify: `draft` and `frozen` each take one `AdvanceLifecycle` step to `retired`; `research_only` takes `research_only -> frozen -> retired`, in that order. Every step calls the existing Persona registry lifecycle write owner with the original caller bearer, actor and tenant; the BFF borrows no service role. The owner requires lifecycle governance authority (for example `governance_reviewer`). Admission's operator role alone is insufficient. `draft -> research_only` still requires `persona.admin`, and `draft -> frozen` remains invalid. `retired` is terminal.
+
+The never-provisioned success receipt has `dispatch_path: "persona_service.lifecycle"`, `domain_receipt: {"persona_id": "…", "state": "retired", "steps": [...]}`, and the final owner record in `authoritative_readback`. Each step names `action_id: "AdvanceLifecycle"`, `from_state`, `target_state`, and its full owner `authoritative_readback`. A rejected or unconfirmed step fails the command and records `error.domain_receipt` with `status: "failed"`, completed `steps`, `failed_step`, and the last confirmed `authoritative_readback`. If the second step is rejected, the first step remains committed as `frozen`; a later command can resume there. An unconfirmed write must be checked against the owner before retrying.
 
 Receipt (`domain_receipt`, repeated in `authoritative_readback`):
 
@@ -1278,15 +1282,15 @@ Receipt (`domain_receipt`, repeated in `authoritative_readback`):
 
 `pending_step` and `pending_reason` are present only when `retirement.status` is `pending`; replaying the command continues from that step.
 
-Failed receipts (no owner write happens):
+Admission/execution refusals before retirement writes:
 
 | code | downstream_status | meaning |
 | --- | --- | --- |
-| `persona_case_not_found` | 404 | the Persona has no provisioning ledger |
+| `persona_case_not_found` | 404 | no provisioning ledger and owner lifecycle outside `draft`, `research_only`, `frozen` (or no owner Persona); also a ledger that disappears before coordinator execution |
 | `release_case_use_release_retire` | 409 | the ledger idempotency key starts with `dev-paper-release-`; use `scripts/retire_dev_paper_release_cases.py` |
 | `tenant_required` | 403 | the authenticated caller has no tenant claim |
 
-Dry run (`dryRun: true`, the existing command-admission mechanism) reads the provisioning record only and never calls the coordinator. The response is the usual dry-run submission with `meta.plan`: `persona_id`, `state`, `release_case`, `retirement_status`, `planned_steps` (steps not yet confirmed, in coordinator order) and `confirmed_steps`. A missing ledger or a release case is refused with the same codes as above.
+Dry run (`dryRun: true`, the existing command-admission mechanism) reads the provisioning record only and never calls the coordinator. The response is the usual dry-run submission with `meta.plan`: `persona_id`, `state`, `release_case`, `retirement_status`, `planned_steps` (steps not yet confirmed, in coordinator order) and `confirmed_steps`. This existing dry-run path still returns `persona_case_not_found` for every missing ledger, including the never-provisioned lifecycle set; it does not plan the new execution fallback. A release case is refused with the same code as above.
 
 ### PM-12 PnL formula version (2026-11-12)
 

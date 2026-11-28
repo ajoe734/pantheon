@@ -1,0 +1,131 @@
+{
+  "task_id": "PERSONA-RETIRE-NEVER-PROVISIONED-20261128",
+  "root_cause_class": "RC2 / persona-loop: merged retirement command unusable for never-provisioned personas",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "delivery": {
+    "source": "implemented; independent review pending",
+    "merged": false,
+    "deployed": false,
+    "accepted": false
+  },
+  "changes": {
+    "owner": "Exactly draft -> retired added with governance-plane roles; activation remains persona.admin; draft -> frozen invalid; retired terminal.",
+    "evaluator": "Mirrors the single new owner edge; unchanged test_transitions_mirror_persona_owner verifies equality.",
+    "bff": "No ledger: authenticated owner read, exact tenant check, then draft/frozen -> retired or research_only -> frozen -> retired through existing AdvanceLifecycle HTTP owner. Every step retains authoritative readback. Provisioned and release paths unchanged.",
+    "shared_error_receipt": "Two necessary supporting files beyond the initial artifact list: command_adapters/base.py adds an optional domain_receipt to ActionUnavailableError; command_executor.py preserves it on failed command receipts. Other errors retain their previous shape."
+  },
+  "verification": [
+    {
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona/test_lifecycle_approval_verifier.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_persona_case_retire_command.py",
+      "exit_code": 0,
+      "result": "150 passed, 1 skipped (docker unavailable), 3 existing dependency deprecation warnings; 16.74s"
+    },
+    {
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py",
+      "exit_code": 0,
+      "result": "196 passed, 3 existing dependency deprecation warnings; 88.43s"
+    },
+    {
+      "command": "timeout 120 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q tests/persona_capital_write_owner/test_persistent_owners.py services/control-plane/bff/tests/test_command_adapters_router.py::test_typed_domain_command_dispatch_and_receipt services/control-plane/bff/tests/test_command_adapters_router.py::test_main_app_final_command_submission_regression services/control-plane/bff/tests/test_command_adapters_router.py::test_accepted_wrapped_alias_dispatches_successfully services/control-plane/bff/tests/test_command_adapters_router.py::test_unavailable_runtime_verb_has_no_downstream_dispatch",
+      "exit_code": 0,
+      "result": "18 passed, 1 skipped, 3 existing dependency deprecation warnings; 3.95s"
+    },
+    {
+      "command": "timeout 60 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "39 passed, 3 existing dependency deprecation warnings; 43.72s"
+    },
+    {
+      "command": "timeout 60 \"$PANTHEON_DEPENDENCY_PYTHON\" scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed=true; failures=[]; 382 entries, 4 waivers"
+    },
+    {
+      "command": "Compile and simulate hosted_acceptance.read_only_probe.python with local HTTP fixtures",
+      "exit_code": 0,
+      "result": "Before/after readbacks pass; a protected persona change is refused; GET only (48 reads across 3 runs). Local simulation is not hosted evidence."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "Operator-triggered retirement only; no recurring job or emitter.",
+    "size_and_count_at_hosted_scale": "Three hosted draft personas: one in-place owner lifecycle update each (3 existing records, no new record). General path: one owner read and at most two existing owner-record updates per command; no additional owner record.",
+    "growth_per_day": "0 new Persona records/day and 0 recurring bytes/day. Only existing command/audit receipt retention applies to human-issued commands; each new receipt includes at most two distinct existing owner snapshots (the final snapshot is repeated in the standard receipt).",
+    "cap": "At most two AdvanceLifecycle calls and two completed step readbacks per retirement. At most eight owner/BFF persona pairs (16 GETs) in the manual read-only probe.",
+    "cleanup": "Existing Persona owner record and command/audit retention remain authoritative; no new table, file, cache, queue, temporary runtime directory, or writer to register.",
+    "new_persistent_writer": false
+  },
+  "hosted_acceptance": {
+    "status": "pending independent review, merge and governed dev deployment; no hosted writes performed by this worker",
+    "persona_ids": [
+      "persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8",
+      "persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a",
+      "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715"
+    ],
+    "authorized_action": "The task brief records operator consent dated 2026-11-28 to retire exactly these three never-provisioned drafts on dev after deployment.",
+    "steps": [
+      "Verify the hosted manifest serves the merged change and every expected steady service is healthy at that release. Read current environment identity from vm-dev-staging-prod-management-plan.md section 3.1.",
+      "Resolve the exact three trading persona ids from hosted registry facts. Run the read-only probe in phase before and retain stdout as the baseline evidence artifact.",
+      "In the existing admintest browser session, visit /management/personas/<id> for each listed draft and press the existing retire button. Retain the three command ids and terminal executed receipts.",
+      "Run the read-only probe in phase after. Verify authoritative owner lifecycle_state retired and BFF listScope retired for all three, and unchanged lifecycle/admin status/listScope for persona-risk-officer, persona-red-team and the three trading personas.",
+      "Record browser and readback artifacts through canonical status/evidence workflow; do not mark accepted based on local tests."
+    ],
+    "read_only_probe": {
+      "python": "import json, os, pathlib, urllib.parse, urllib.request\nmanifest = json.loads(pathlib.Path(\"docs/deployment/evidence/PERSONA-RETIRE-NEVER-PROVISIONED-20261128/evidence.json\").read_text())\ntargets = manifest[\"hosted_acceptance\"][\"persona_ids\"]\ntrading = json.loads(os.environ[\"PERSONA_TRADING_IDS\"])\nassert len(trading) == 3 and len(set(trading)) == 3\nprotected = [\"persona-risk-officer\", \"persona-red-team\"] + trading\nassert len(set(targets + protected)) == 8\nphase = os.environ.get(\"PERSONA_RETIRE_PROBE_PHASE\", \"after\")\nassert phase in {\"before\", \"after\"}\ntoken = pathlib.Path(os.environ[\"PERSONA_ACCEPTANCE_TOKEN_FILE\"]).read_text().strip()\ndef read(origin, route):\n    request = urllib.request.Request(origin.rstrip(\"/\") + route, headers={\"Authorization\": \"Bearer \" + token})\n    with urllib.request.urlopen(request, timeout=10) as response:\n        return json.load(response)\nresult = {\"targets\": {}, \"protected\": {}}\nfor persona_id in targets + protected:\n    encoded = urllib.parse.quote(persona_id, safe=\"\")\n    owner = read(os.environ[\"PERSONA_OWNER_URL\"], \"/api/personas/\" + encoded)\n    dto = read(os.environ[\"PANTHEON_BFF_URL\"], \"/bff/personas/\" + encoded)[\"data\"]\n    row = {\"lifecycle_state\": owner[\"lifecycle_state\"], \"listScope\": dto[\"listScope\"],\n           \"ownerLifecycleState\": dto[\"ownerLifecycleState\"], \"status\": owner.get(\"status\")}\n    assert row[\"lifecycle_state\"] == row[\"ownerLifecycleState\"]\n    result[\"targets\" if persona_id in targets else \"protected\"][persona_id] = row\n    if persona_id in targets:\n        assert row[\"lifecycle_state\"] == (\"draft\" if phase == \"before\" else \"retired\")\n        if phase == \"after\":\n            assert row[\"listScope\"] == \"retired\"\nif phase == \"after\":\n    baseline = json.loads(pathlib.Path(os.environ[\"PERSONA_RETIRE_BASELINE\"]).read_text())\n    assert result[\"protected\"] == baseline[\"protected\"], \"Protected persona lifecycle/scope changed\"\nprint(json.dumps(result, sort_keys=True))\n",
+      "run": "timeout 180 python3 -c 'import json,pathlib; exec(compile(json.loads(pathlib.Path(\"docs/deployment/evidence/PERSONA-RETIRE-NEVER-PROVISIONED-20261128/evidence.json\").read_text())[\"hosted_acceptance\"][\"read_only_probe\"][\"python\"], \"<read-only-acceptance>\", \"exec\"))'",
+      "environment": {
+        "PERSONA_RETIRE_PROBE_PHASE": "before or after (default after)",
+        "PERSONA_OWNER_URL": "Current dev Persona owner origin reachable from probe host",
+        "PANTHEON_BFF_URL": "Current dev BFF origin from hosted environment identity",
+        "PERSONA_ACCEPTANCE_TOKEN_FILE": "Existing caller JWT file; never print token",
+        "PERSONA_TRADING_IDS": "JSON array of exactly three trading persona ids, resolved from hosted registry facts",
+        "PERSONA_RETIRE_BASELINE": "Path to retained before-phase stdout JSON (required in after phase)"
+      },
+      "side_effects": "GET only; prints bounded lifecycle/scope evidence to stdout. Operator saves stdout as the acceptance artifact. Does not issue retirement commands or write hosted product data."
+    }
+  },
+  "residual_findings": [
+    {
+      "finding": "Existing dryRun planning still requires a provisioning ledger and returns persona_case_not_found for never-provisioned personas. The task explicitly preserves existing dry-run assertions and scopes the fix to actual retirement execution; contract now distinguishes the two.",
+      "owner": "persona-loop coordinator / RC2 retirement command work package",
+      "disposition": "Recorded for coordinator triage; no new task opened or dry-run semantics widened."
+    }
+  ],
+  "unsuccessful_validation_attempts": [
+    {
+      "command": "python3 -m pytest -q (initial focused batch)",
+      "exit_code": 1,
+      "reason": "System Python has no pytest. No tests ran."
+    },
+    {
+      "command": "timeout 120 /tmp/ctf-venv/bin/python -m pytest -q (focused batch before final two added BFF cases)",
+      "exit_code": 1,
+      "reason": "147 passed, 1 skipped, 1 failed because this unrelated temporary venv lacks yaml. Superseded by provided dependency interpreter run above."
+    },
+    {
+      "command": "timeout 120 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/persona/test_lifecycle_approval_verifier.py services/persona-evaluator-agent/test_persona_evaluator_agent.py services/control-plane/bff/tests/test_persona_case_retire_command.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py tests/persona_capital_write_owner/test_persistent_owners.py",
+      "exit_code": 124,
+      "reason": "Reached explicit 120-second batch bound. Not counted as passed; split into focused and regression batches."
+    },
+    {
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest -q services/control-plane/bff/tests/test_persona_lifecycle_forward.py tests/persona_capital_write_owner/test_persistent_owners.py services/control-plane/bff/tests/test_command_adapters_router.py",
+      "exit_code": 124,
+      "reason": "Broad alias-matrix batch exceeded the 180-second bound without reporting failures before cutoff; not counted as passed. Replaced by separately bounded lifecycle-forwarding and selected command regression batches."
+    }
+  ],
+  "review_independence": {
+    "owner_family": "Codex",
+    "assigned_reviewer": "Antigravity",
+    "exception": null
+  },
+  "verification_summary": "403 passed, 2 skipped across the four completed pytest batches; storage manifest and read-only probe simulation passed. No timeout batch counted as passed.",
+  "source_anchors": [
+    "55fd13446",
+    "f72c3acd0"
+  ]
+}

@@ -274,3 +274,61 @@ def test_lifecycle_verifier_passes_explicit_paper_usage_context(monkeypatch):
     assert verifier.verify_persona_lifecycle_decision(**ARGS) is True
     ctx = seen["usage_context"]
     assert (ctx.environment, ctx.target_stage, ctx.capital_scale_pct) == ("dev", "paper", 0)
+
+
+@pytest.mark.parametrize("role,allowed", [
+    ("governance_reviewer", True), ("viewer", False), ("operator", False),
+    ("persona.admin", False),
+])
+def test_draft_retirement_uses_governance_authority(tmp_path, monkeypatch, role, allowed):
+    from tests.persona_capital_write_owner.test_persistent_owners import (
+        _persona_create_payload, _persona_jwt_headers,
+    )
+
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "persona-test-secret")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner, governance_decision_verifier=None))
+    admin = _persona_jwt_headers("operator-persona", "t1", "persona.admin")
+    assert client.post("/api/personas", headers=admin,
+                       json=_persona_create_payload(persona_id="per1", tenant_id="t1")).status_code == 201
+    before = owner.get("per1").model_dump()
+    response = client.patch(
+        "/api/personas/per1/lifecycle", headers=_persona_jwt_headers("actor", "t1", role),
+        json={"actor_id": "actor", "target_state": "retired"},
+    )
+    if not allowed:
+        assert response.status_code == 403
+        assert owner.get("per1").model_dump() == before
+        return
+    assert response.status_code == 200, response.text
+    assert owner.get("per1").lifecycle_state == "retired"
+    retired = owner.get("per1").model_dump()
+    for target in ("draft", "research_only", "consultable", "paper_owner", "live_owner", "frozen"):
+        denied = client.patch("/api/personas/per1/lifecycle", headers=admin,
+                              json={"actor_id": "operator-persona", "target_state": target})
+        assert denied.status_code == 422, denied.text
+        assert owner.get("per1").model_dump() == retired
+
+
+def test_draft_activation_still_requires_persona_admin(tmp_path, monkeypatch):
+    from tests.persona_capital_write_owner.test_persistent_owners import (
+        _persona_create_payload, _persona_jwt_headers,
+    )
+
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "persona-test-secret")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner, governance_decision_verifier=None))
+    admin = _persona_jwt_headers("operator-persona", "t1", "persona.admin")
+    assert client.post("/api/personas", headers=admin,
+                       json=_persona_create_payload(persona_id="per1", tenant_id="t1")).status_code == 201
+    before = owner.get("per1").model_dump()
+    governance = _persona_jwt_headers("gov", "t1", "governance_reviewer")
+    for target, status in (("research_only", 403), ("frozen", 422)):
+        denied = client.patch("/api/personas/per1/lifecycle", headers=governance,
+                              json={"actor_id": "gov", "target_state": target})
+        assert denied.status_code == status, denied.text
+        assert owner.get("per1").model_dump() == before
+    assert client.patch("/api/personas/per1/lifecycle", headers=admin,
+                        json={"actor_id": "operator-persona", "target_state": "research_only"}).status_code == 200

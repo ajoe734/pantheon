@@ -49,6 +49,7 @@ class ActionUnavailableError(HTTPException, ValueError):
         suggestion: str = "Submit a supported domain action or use the governed CLI workflow.",
         retryable: bool = False,
         downstream_status: int = 422,
+        domain_receipt: Optional[Dict[str, Any]] = None,
     ) -> None:
         ValueError.__init__(self, message)
         HTTPException.__init__(
@@ -70,6 +71,7 @@ class ActionUnavailableError(HTTPException, ValueError):
         self.suggestion = suggestion
         self.retryable = retryable
         self.downstream_status = downstream_status
+        self.domain_receipt = domain_receipt
 
     def __str__(self) -> str:
         return self.message

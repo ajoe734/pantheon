@@ -1477,6 +1477,8 @@ def execute_command_with_status(
             "userActionable": False,
             "suggestion": exc.suggestion,
         }
+        if exc.domain_receipt is not None:
+            error["domain_receipt"] = exc.domain_receipt
         log.warning("Command %s action unavailable: %s", command_id, error["message"])
         return CommandStatus.FAILED, None, error
     except HTTPException as exc:

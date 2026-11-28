@@ -47,7 +47,7 @@ ACTIONS = (
 LIFECYCLE_TARGETS = {"freeze_persona": "frozen", "suspend_persona": "frozen", "retire_persona": "retired"}
 MAPPING_VERSION = "promotion-governance-2026-07-05-v1"
 LIFECYCLE_TRANSITIONS = {
-    "draft": {"research_only"},
+    "draft": {"research_only", "retired"},
     "research_only": {"consultable", "frozen"},
     "consultable": {"paper_owner", "frozen"},
     "paper_owner": {"live_owner", "frozen"},
