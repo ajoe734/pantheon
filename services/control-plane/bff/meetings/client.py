@@ -2149,6 +2149,9 @@ def _read_inbox_consultation(tenant_id: str) -> Tuple[Dict[str, Any], Dict[str, 
     reads: Dict[str, Any] = {}
     futures: Dict[str, Any] = {}
     for name in ("list_meetings", "list_proposals", "get_catalogue"):
+        if remaining_management_read_budget() <= 0:
+            reads[name] = {"status": "unavailable", "reason": f"read_timeout:{name}"}
+            continue
         if not _INBOX_CONSULTATION_SLOTS.acquire(blocking=False):
             reads[name] = {"status": "unavailable", "reason": f"owner_read_capacity_exhausted:{name}"}
             continue
@@ -2157,7 +2160,7 @@ def _read_inbox_consultation(tenant_id: str) -> Tuple[Dict[str, Any], Dict[str, 
         except BaseException:
             _INBOX_CONSULTATION_SLOTS.release()
             raise
-        future.add_done_callback(lambda _future: _INBOX_CONSULTATION_SLOTS.release())
+        future.add_done_callback(lambda _future, slots=_INBOX_CONSULTATION_SLOTS: slots.release())
         futures[name] = future
     if futures:
         done, _ = wait(futures.values(), timeout=remaining_management_read_budget())
