@@ -5,13 +5,14 @@
   "owner": "Codex2",
   "reviewer": "Claude2",
   "target_branch": "dev",
-  "base_sha": "9679a72f0095178b80c9e37df9312f3137064c7b",
+  "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
   "source_anchors": [
+    "1fe94533ff92589347976317f424f0b2bde79acd",
     "cf64ad1327e893cdbe9b9e593f8ac6feeccd8d87",
     "6a30ca66e4c1402d58df1e2e1f4fb2c20f8a83e4"
   ],
   "delivery": {
-    "source": "PR #7998 published; canonical handoff rejected for omitted artifact-contract paths; no review binding or approval claimed",
+    "source": "PR #7998 refreshed with current dev; artifact contract repaired by Human/Ops; awaiting renewed exact-head handoff and Claude2 independent review; no approval or merge claimed",
     "hosted": "pending deployment and next Root switch; no hosted proof claimed",
     "pr": "https://github.com/ajoe734/pantheon/pull/7998"
   },
@@ -24,19 +25,19 @@
   },
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_discovery_summary.py services/source_ingestion/tests/test_demand_priority.py acceptance/test_discovery_pipeline_day.py --disable-warnings --maxfail=3",
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_discovery_summary.py services/source_ingestion/tests/test_demand_priority.py acceptance/test_discovery_pipeline_day.py --disable-warnings --maxfail=3",
       "exit_code": 0,
-      "result": "377 passed, 15 warnings in 114.05s; before clean rebase (upstream changed paper fleet files and another register row, no source-ingestion files)"
+      "result": "398 passed, 15 warnings in 132.71s; exit 0 after integrating dev 9cf0aeff70d7611dda3d5bca4f5f460147aad003 and resolving the discovery-summary composition conflict."
     },
     {
       "command": "python3 scripts/check_storage_manifest.py",
       "exit_code": 0,
-      "result": "passed; 380 entries; no failures"
+      "result": "passed after dev integration; 380 entries; no failures; exit 0"
     },
     {
       "command": "git diff --check",
       "exit_code": 0,
-      "result": "passed"
+      "result": "passed after dev integration and evidence updates; exit 0"
     }
   ],
   "regression_proof": [
@@ -80,10 +81,15 @@
       "class": "RC3",
       "finding": "Existing calls day rows and non-unsent events/cards lack a verified global retention cap; the added unsent events are independently capped.",
       "disposition": "Existing RC3 WP3.1 writer obligation retained in storage manifest; no claim that the whole ledger is bounded."
+    },
+    {
+      "class": "RC2",
+      "finding": "Coordinator-provided read-only hosted observation at 2026-11-28 01:00Z: 30 L2 records are already closed attempts_exhausted with an unsent last reason (28 name resolution, 2 OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE). This worker did not independently repeat the hosted read.",
+      "disposition": "Coordinator follow-up must own any governed reopening of these existing terminal records; no queue repair or retroactive spend rewrite is included in PR #7998."
     }
   ],
   "handoff_gate": {
-    "status": "blocked",
+    "status": "artifact_contract_resolved_pending_rehandoff",
     "attempted_head": "479737f0f817feb2645117b8a4efba1408e53d8f",
     "rejection": "changed file 'docs/operations/storage-manifest.json' is outside the task artifact contract for repository 'pantheon'",
     "required_artifacts": [
@@ -105,6 +111,14 @@
       }
     ],
     "recovery": "Human/Ops must add these four paths using governed artifact-contract while the task is blocked; owner then reopens and repeats handoff with the current PR/head/committed manifest. No direct JSON edits or command-root patching.",
-    "authority_evidence": "scripts/ai_status.py::command_artifact_contract explicitly checks current_actor() == Human/Ops; Codex2 cannot revise it. Existing owner/runtime authority is preserved."
+    "authority_evidence": "scripts/ai_status.py::command_artifact_contract explicitly checks current_actor() == Human/Ops; Codex2 cannot revise it. Existing owner/runtime authority is preserved.",
+    "resolution": "Human/Ops added all four required artifacts via governed artifact-contract on 2026-11-28 and reopened the task at 03:39:55Z; verified by Codex2 through the governed show command. New exact-head handoff must succeed before any review binding is claimed."
+  },
+  "integration": {
+    "method": "Merged dev into published task branch, preserving history for normal non-force publication.",
+    "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+    "anchor": "1fe94533ff92589347976317f424f0b2bde79acd",
+    "conflict_resolution": "discovery_summary.py composes upstream distinct_sources/calls_per_source with the existing task unsent_calls field. All other dev changes merged automatically.",
+    "scope": "The four added artifact paths retain the changes in 8f8c567f6, with only the discovery-summary query composition needed for current dev."
   }
 }
