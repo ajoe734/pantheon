@@ -6610,6 +6610,50 @@
     "file": "scripts/openclaw-configure-shared-model-pool.sh",
     "contains": "retired-stock-bootstrap"
    }
+  },
+  {
+   "name": "Taiwan bounded runtime retirement receipt (/tmp/pantheon-bounded-runtime-retired.log)",
+   "owner": "market-data domain cb4f6795 / release restore helpers",
+   "writer": "scripts/deploy_nonprod_vm.sh bounded_runtime_retire_if_not_in_place; existing writer from #8003, adds restored_in_place reason only",
+   "task": "TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128",
+   "register_class": "RC2",
+   "bound_status": "bounded",
+   "cadence": "Only on retiring an existing stale record, at most once per record; four scheduled refreshes per weekday at current workflow plus manual runs; no new recurring job",
+   "count_at_hosted_scale": "One receipt log and one transient .tmp sibling on the single hosted dev VM; this change adds zero state directories",
+   "size": "Default tail of 50 receipt lines, typically <1 KiB per default-path receipt (<50 KiB log plus <50 KiB transient replacement); actual line length depends on host paths and configurable cap",
+   "growth_per_day": "0 net after the 50-line tail fills; normally 0 on converged runs; at most one receipt per retired record (four newly failed scheduled runs/day would add four lines before tail cap, plus manual runs)",
+   "cap": "Last BOUNDED_RUNTIME_RETIRED_LOG_LINES lines, default 50; tail is rewritten in place; receipt path does not match the state-dir glob",
+   "cleanup": "State directory is removed upon verified retirement; receipt tail is compacted on each append; transient sibling is atomically renamed over log. Pre-existing failed state-dir accumulation has no global count/age cap and remains RC3 residual, not bounded by this receipt cap",
+   "readers": [
+    "scripts/deploy_nonprod_vm.sh",
+    "hosted read-only acceptance"
+   ],
+   "bound_proof": {
+    "file": "scripts/deploy_nonprod_vm.sh",
+    "contains": "cap=\"${BOUNDED_RUNTIME_RETIRED_LOG_LINES:-50}\""
+   }
+  },
+  {
+   "name": "Bounded source-ingest memory.stat diagnostic in existing refresh run logs",
+   "owner": "market-data domain cb4f6795 / release restore helpers",
+   "writer": "scripts/deploy_nonprod_vm.sh bounded_runtime_record_memory (stdout info line; existing GitHub Actions job log capture)",
+   "task": "TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128",
+   "register_class": "RC2",
+   "bound_status": "bounded",
+   "cadence": "One anon/file current sample alongside each existing memory.peak sample (after an executed profile and before restore); normally <=13 samples per full 12-profile run including restore; extra stale records add one sample each",
+   "count_at_hosted_scale": "Zero new files/tables/queues; one existing Actions job log per refresh on the single dev host",
+   "size": "One numeric anon/file line, <256 bytes/sample; normally <3.25 KiB/run or <13 KiB/day for four scheduled runs, plus manual runs and stale-record retries",
+   "growth_per_day": "Normally <=13 KiB/day added to existing run logs at four scheduled refreshes/day; linear in actual runs/samples, no new recurring writer",
+   "cap": "At most two cgroup keys emitted per sample; historical run retention follows existing Actions run log retention (incident run artifacts expire after 90 days); no independent accumulation on host",
+   "cleanup": "Existing Actions run/log retention and run deletion; no separate host file or cleanup job added",
+   "readers": [
+    "scripts/probe_tw_refresh_restore.py",
+    "market-data diagnostic review"
+   ],
+   "bound_proof": {
+    "file": "scripts/deploy_nonprod_vm.sh",
+    "contains": "source-ingest memory.stat at sample (not peak)"
+   }
   }
  ]
 }

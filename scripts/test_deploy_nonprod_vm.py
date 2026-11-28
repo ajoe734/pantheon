@@ -2505,7 +2505,7 @@ def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_r
 
     refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
     refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
-    # The 00:30Z backup must fetch official opens before the 00:35Z guard;
+    # The 00:30Z backup must fetch official opens before the market-open guard;
     # TAIFEX remains a separate refresh with its own dataset and egress.
     assert refresh_by_id["refresh"][0] < refresh_by_id["taifex_refresh"][0]
     assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
@@ -4199,7 +4199,7 @@ def _run_manage_refresh_runtime_shell(
 ) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     curl_fn = _prune_shell_function("curl_with_retry")
-    manage_fn = _prune_shell_function("manage_source_ingest_refresh_runtime")
+    manage_fn = "\n".join(_prune_shell_function(n) for n in ("source_ingest_restore_clock", "wait_for_source_ingest_restore_readiness", "manage_source_ingest_refresh_runtime"))
 
     fake = tmp_path / "bin"
     fake.mkdir(parents=True, exist_ok=True)
@@ -4241,7 +4241,7 @@ sys.exit(1 if n <= {fail_attempts} else 0)
 
     sleep = fake / "sleep"
     sleep.write_text(
-        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\n',
+        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\necho $(( $(cat "{tmp_path / "clock"}" 2>/dev/null || echo 0) + $1 )) > "{tmp_path / "clock"}"\n',
         encoding="utf-8",
     )
     sleep.chmod(0o755)
@@ -4256,6 +4256,7 @@ sys.exit(1 if n <= {fail_attempts} else 0)
         + curl_fn
         + "\n"
         + manage_fn
+        + f'\nsource_ingest_restore_clock() {{ cat "{tmp_path / "clock"}" 2>/dev/null || echo 0; }}\n'
         + f'\nmanage_source_ingest_refresh_runtime "{env_file}" "{action}" "sha256:aa" "2330.TW"\n'
     )
     proc = subprocess.run(
@@ -4267,14 +4268,15 @@ sys.exit(1 if n <= {fail_attempts} else 0)
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
     curls = curl_log.read_text(encoding="utf-8").splitlines() if curl_log.exists() else []
     sleeps = sleep_log.read_text(encoding="utf-8").splitlines() if sleep_log.exists() else []
     return proc, curls, sleeps
 
 
-@pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_and_restore(
+@pytest.mark.parametrize("action", ["bounded"])
+def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded(
     tmp_path: Path, action: str
 ) -> None:
     # 18 failures (= 90s warmup, exceeding the old 12x5=60s restore cap and previously
@@ -6557,7 +6559,7 @@ _RUN_FUNCTIONS = (
     "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans", "steady_check_cleanup_call_files",
     "steady_check_health_bound_seconds", "bounded_runtime_state_dir", "bounded_runtime_list_state_dirs",
     "bounded_runtime_state_set", "bounded_runtime_record_memory", "bounded_runtime_market_open_guard",
-    "bounded_runtime_validate_profile", "bounded_runtime_retire_if_not_in_place", "bounded_runtime_restore_from_state",
+    "bounded_runtime_validate_profile", "bounded_runtime_matches_steady_record", "bounded_runtime_retire_if_not_in_place", "bounded_runtime_restore_from_state",
     "bounded_runtime_restore_all_states", "steady_posture_problem", "execute_steady_posture_check", "run_finmind_broker_whole_market", "execute_bounded_source_refresh_entrypoint",
 )
 
@@ -6904,8 +6906,8 @@ def test_trading_day_before_market_open_restores_steady_once_and_marks_remaining
 @pytest.mark.parametrize(
     ("now", "blocked"),
     [
-        ("2026-11-18T00:34:00Z", False),   # Wednesday, a profile still fits before 00:55Z
-        ("2026-11-18T00:35:00Z", True),    # last start: 00:55Z minus profile and restore budgets
+        ("2026-11-18T00:29:00Z", False),   # Wednesday, a profile still fits before 00:55Z
+        ("2026-11-18T00:30:00Z", True),    # last start: 00:55Z minus profile and restore budgets
         ("2026-11-18T00:56:00Z", True),
         ("2026-11-18T05:29:00Z", True),    # still inside the session
         ("2026-11-18T07:00:00Z", False),   # after the close: the normal afternoon cron
@@ -6918,6 +6920,30 @@ def test_market_open_guard_window(now: str, blocked: bool) -> None:
     proc = subprocess.run(["bash", "-c", f'{script}\nbounded_runtime_market_open_guard; echo "GUARD=$?"'],
                           env={**os.environ, "PANTHEON_REFRESH_NOW": now}, capture_output=True, text=True, check=False)
     assert f"GUARD={0 if blocked else 1}" in proc.stdout, proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("now", "blocked"),
+    [("2026-11-30T00:25:45Z", False), ("2026-11-30T00:30:00Z", True)],
+)
+def test_market_open_guard_backup_dispatch_with_default_budgets(now: str, blocked: bool) -> None:
+    # The external backup timer fires at 08:25 Taipei. Allow 45s dispatch
+    # latency while retaining the 900s profile + 600s cold-start restore reserve.
+    env = {
+        key: value for key, value in os.environ.items()
+        if key not in {"PANTHEON_REFRESH_PROFILE_BUDGET_SECONDS", "PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS"}
+    }
+    env["PANTHEON_REFRESH_NOW"] = now
+    script = _prune_shell_function("bounded_runtime_market_open_guard")
+    proc = subprocess.run(
+        ["bash", "-c", f"{script}\nbounded_runtime_market_open_guard"],
+        env=env, capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert proc.returncode == (0 if blocked else 1), proc.stdout + proc.stderr
+    if blocked:
+        assert "market_open_0055z" in proc.stdout and "last profile start 00:30Z" in proc.stdout
+    else:
+        assert proc.stdout == ""
 
 
 def test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change(tmp_path: Path) -> None:
@@ -7065,6 +7091,116 @@ def test_genuine_stale_restore_failure_keeps_the_record_and_names_the_failing_pa
     if failure == "image":
         assert not any(e.startswith("restore") for e in host.event_lines()), "a missing image is never recreated"
 
+
+
+# --- TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128 ---
+
+@pytest.mark.parametrize("mismatch", ["", "env", "stopped", "source_stopped", "bounded", "unhealthy"])
+def test_kept_entered_record_retires_only_with_the_complete_recorded_steady_posture(tmp_path: Path, mismatch: str) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A,
+                                 steady_ids="steady-sched steady-proj")
+    (record / "pre_env.json").write_text('["FINMIND_API_TOKEN=steady-old","A=1"]')
+    script = host._prelude() + host.fns + """
+eval "$(declare -f docker | sed '1s/docker/docker_base/')"
+docker() {
+  case "$*" in
+    "inspect --format {{.State.Status}} "*)
+      if [[ "$MISMATCH" == stopped && "${@: -1}" == steady-proj ]] || [[ "$MISMATCH" == source_stopped && "${@: -1}" == cid-src ]]; then
+        echo exited
+      else echo running; fi ;;
+    "inspect --format {{json .Config.Env}} cid-src")
+      if [[ "$MISMATCH" == env ]]; then echo '["A=2","FINMIND_API_TOKEN=steady-old"]'; else docker_base "$@"; fi ;;
+    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) [[ "$MISMATCH" != bounded ]] || echo bx1 ;;
+    *) docker_base "$@" ;;
+  esac
+}
+"""
+    if mismatch == "unhealthy":
+        script += 'steady_posture_problem() { reason="source-ingest_unhealthy"; }\n'
+    script += f'bounded_runtime_restore_from_state "{record}"\n'
+    proc = subprocess.run(["bash", "-c", script], env={**host._env("", "", ""), "MISMATCH": mismatch},
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    if not mismatch:
+        assert host.event_lines() == [], "an already restored source-ingest must not be recreated"
+        assert "reason=restored_in_place" in proc.stdout
+        assert "docker start steady-sched steady-proj" not in host.docker_calls()
+        assert "reason=restored_in_place" in (host.state_root / "pantheon-bounded-runtime-retired.log").read_text()
+    else:
+        assert [e.split()[0] for e in host.event_lines()] == ["restore"]
+        assert "reason=restored_in_place" not in proc.stdout
+    assert not record.exists()
+
+
+@pytest.mark.parametrize("health,posture,ready,expected", [("starting", "", True, 0), ("starting", "source-ingest_unhealthy", True, 1), ("starting", "", False, 1), ("unhealthy", "", True, 1)])
+def test_restore_readiness_timeout_rechecks_starting_posture_once(tmp_path: Path, health: str, posture: str, ready: bool, expected: int) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A,
+                                 steady_ids="steady-sched steady-proj")
+    checks = tmp_path / "checks"
+    script = host._prelude() + host.fns + f"""
+bounded_runtime_retire_if_not_in_place() {{ return 1; }}
+manage_source_ingest_refresh_runtime() {{ return 75; }}
+curl() {{ return {0 if ready else 1}; }}
+steady_posture_problem() {{ echo check >> "{checks}"; reason="{posture}"; }}
+eval "$(declare -f docker | sed '1s/docker/docker_base/')"
+docker() {{
+  case "$*" in
+    "inspect --format {{{{if .State.Health}}}}"*) echo {health} ;;
+    *) docker_base "$@" ;;
+  esac
+}}
+bounded_runtime_restore_from_state "{record}"
+"""
+    proc = subprocess.run(["bash", "-c", script], env=host._env("", "", ""), capture_output=True, text=True, timeout=30)
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+    assert (checks.read_text().splitlines() if checks.exists() else []) == (["check"] if health == "starting" else [])
+    assert record.exists() == bool(expected)
+
+
+
+
+@pytest.mark.parametrize("image", ["", _SHA_OLD])
+def test_restored_in_place_match_rejects_missing_or_different_image(tmp_path: Path, image: str) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A)
+    script = host._prelude() + host.fns + f"""
+BR_IMAGE_ID={_SHA_A}
+bounded_runtime_matches_steady_record "{record}" cid-src "{image}"
+"""
+    proc = subprocess.run(["bash", "-c", script], env=host._env("", "", ""), capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 1
+    assert host.event_lines() == []
+
+def test_manage_restore_uses_the_longer_deadline_and_preserves_timeout_status(tmp_path: Path) -> None:
+    # Exercise the actual Python recreate/env validation plus shell wait routing.
+    for failures, expected in [(40, 0), (100, 75)]:
+        run_dir = tmp_path / str(failures)
+        run_dir.mkdir()
+        proc, curls, sleeps = _run_manage_refresh_runtime_shell(run_dir, "restore", fail_attempts=failures)
+        assert proc.returncode == expected, proc.stderr
+        assert len(curls) == (41 if failures == 40 else 60)
+        assert sleeps == ["5"] * (40 if failures == 40 else 60)
+
+def test_restore_ready_wait_uses_an_injected_monotonic_deadline(tmp_path: Path) -> None:
+    # Curl time counts too: simulate a 193-second cold start, then a wait that never becomes ready.
+    for ready_at, expected in [(193, 0), (9999, 75)]:
+        clock = tmp_path / f"clock-{ready_at}"
+        clock.write_text("0")
+        script = _prune_shell_function("wait_for_source_ingest_restore_readiness") + f"""
+source_ingest_restore_clock() {{ cat "{clock}"; }}
+sleep() {{ echo $(( $(cat "{clock}") + $1 )) > "{clock}"; }}
+curl() {{
+  local now=$(cat "{clock}")
+  echo $((now + 5)) > "{clock}"
+  (( now >= {ready_at} ))
+}}
+wait_for_source_ingest_restore_readiness
+"""
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+        assert proc.returncode == expected, proc.stderr
+        assert int(clock.read_text()) == (205 if expected == 0 else 300)
 
 def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call() -> None:
     snapshot = {"snapshot_id": "s", "event_time": "2026-10-02T06:00:00Z", "calendar_evidence": {"market": "TWSE"}}
@@ -7463,14 +7599,14 @@ def test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessio
     assert "market_open_0055z" in payload_in["reason"] and "00:55Z" in payload_in["reason"]
     assert payload_in["requests_made"] == 0
 
-    # 2. Dispatch starts at 00:34Z (allowed), finishes session 2026-06-08, then reaches 00:35Z before session 2026-06-09.
+    # 2. Dispatch starts at 00:29Z (allowed), finishes session 2026-06-08, then reaches 00:30Z before session 2026-06-09.
     between_dir = tmp_path / "between"
     between_dir.mkdir()
     proc_bw, _calls_bw, out_bw = _run_broker_backfill_func(
         between_dir,
         "real_between_sessions",
         {
-            "PANTHEON_REFRESH_NOW": "2026-11-18T00:34:00Z",
+            "PANTHEON_REFRESH_NOW": "2026-11-18T00:29:00Z",
             "BROKER_BACKFILL_START_DATE": "2026-06-08",
             "BROKER_BACKFILL_END_DATE": "2026-06-09",
             "BROKER_BACKFILL_MIN_INTERVAL_SECONDS": "0.6",

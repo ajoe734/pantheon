@@ -868,6 +868,17 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     assert "restored container env mismatch" in proc.stderr
 
 
+
+def _install_restore_test_clock(bin_dir: Path) -> str:
+    """Advance the restore clock by requested sleeps; no wall-clock readiness deadline."""
+    clock = bin_dir / "restore-clock"
+    clock.write_text("0")
+    (bin_dir / "sleep").write_text(
+        f'#!/bin/sh\necho $(( $(cat "{clock}") + $1 )) > "{clock}"\n'
+    )
+    (bin_dir / "sleep").chmod(0o755)
+    return f'source_ingest_restore_clock() {{ cat "{clock}"; }}\n'
+
 def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaults_match_capture=False, **state_changes):
     """Execute maintained shell + Python + retry helper against real Compose config.
 
@@ -894,9 +905,7 @@ def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaul
         **state_changes,
     }
     bin_dir, state_file, events_file, _, port = _setup_refresh_stub_docker(tmp_path, initial)
-    # Keep the production retry count but shorten sleep for a bounded local test.
-    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
-    (bin_dir / "sleep").chmod(0o755)
+    injected_clock = _install_restore_test_clock(bin_dir)
     captured_file = tmp_path / "captured.json"
     captured_file.write_text(json.dumps(captured))
     text = DEPLOY_SCRIPT.read_text()
@@ -905,7 +914,8 @@ def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaul
     script = tmp_path / "restore.sh"
     script.write_text(
         "set -euo pipefail\n"
-        + "curl_with_retry() {" + function("curl_with_retry") + "\n}\n"
+        + injected_clock
+        + "wait_for_source_ingest_restore_readiness() {" + function("wait_for_source_ingest_restore_readiness") + "\n}\n"
         + "manage_source_ingest_refresh_runtime() {" + function("manage_source_ingest_refresh_runtime") + "\n}\n"
         + 'manage_source_ingest_refresh_runtime "$1" restore "$2" || exit $?\n'
         + 'curl -fsS "$SOURCE_INGEST_API_URL/api/source-ingest/controller/readback" >/dev/null\n'
@@ -942,7 +952,7 @@ def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
 def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
     proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
     assert proc.returncode != 0
-    assert len([e for e in events if e["event"] == "readyz"]) == 37  # 1 initial + 36 retries (180s readiness budget)
+    assert len([e for e in events if e["event"] == "readyz"]) == 60  # injected 300s deadline / 5s polling
     assert not any(e["event"] == "connector_readback" for e in events)
 
 
@@ -978,14 +988,18 @@ def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tm
         "readiness_fails_on_restore": True,
     }
     bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
-    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
-    (bin_dir / "sleep").chmod(0o755)
+    injected_clock = _install_restore_test_clock(bin_dir)
+    script = _deploy_script_without_readback(tmp_path)
+    text = script.read_text()
+    start = text.index("source_ingest_restore_clock() {")
+    end = text.index("\n}\n", start) + 3
+    script.write_text(text[:start] + injected_clock + text[end:])
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
                SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
                SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="30", PANTHEON_REMOTE_DIR=str(ROOT))
     # Default force=false, through the normal caller and its non-blocking cleanup.
     proc = subprocess.run([
-        "bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--non-blocking",
+        "bash", str(script), "--refresh-only", "--non-blocking",
         "--connector-id", "tw-taifex-futures-options-chip", "--allowed-hosts",
         "openapi.taifex.com.tw,www.taifex.com.tw", "--dataset", "taifex_ssf_contracts",
         "--output", str(output),
@@ -993,7 +1007,7 @@ def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tm
     assert proc.returncode != 0
     assert json.loads(output.read_text())["status"] == "failed"
     events = [json.loads(line) for line in events_file.read_text().splitlines()]
-    assert [e["status"] for e in events if e["event"] == "readyz"] == [200, 200] + [503] * 37
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200, 200] + [503] * 60
     assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
 
 
@@ -3934,3 +3948,46 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
             )
             assert proc_hosted.returncode == 0, (mode, cid, proc_hosted.stderr)
 
+
+
+# Read-only post-merge proof must reject the historical restore failure and unrelated runs.
+@pytest.mark.parametrize("case", ["restored", "retired", "kept", "step_failed", "wrong_head", "wrong_workflow", "no_outcome"])
+def test_restore_acceptance_probe_requires_the_merged_refresh_and_healthy_posture(monkeypatch, capsys, case):
+    import sys
+    from scripts import probe_tw_refresh_restore as probe
+
+    run = {"head_branch": "dev", "path": ".github/workflows/dev-tw-market-refresh.yml", "status": "completed", "head_sha": "a" * 40}
+    comparison = {"status": "ahead"}
+    job = {"name": "Taiwan Market Daily Refresh", "id": 123, "steps": [{"name": "Verify and restore steady source-ingest posture", "conclusion": "success"}]}
+    logs = "2026-11-28T06:24Z [remote-deploy] steady posture check: status=healthy reason=bounded_runtime_restored_once\n"
+    if case == "retired":
+        logs += "[remote-deploy] bounded runtime record retired: run=1 phase=entered reason=restored_in_place recorded_image=x\n"
+    elif case == "kept":
+        logs += "[remote-deploy] bounded runtime record /tmp/record kept: restore failed at source_ingest_restore\n"
+    elif case == "step_failed":
+        job["steps"][0]["conclusion"] = "failure"
+    elif case == "wrong_head":
+        comparison["status"] = "diverged"
+    elif case == "wrong_workflow":
+        run["path"] = ".github/workflows/nonprod-deploy.yml"
+    elif case == "no_outcome":
+        logs = ""
+
+    def fake_gh(*args, raw=False):
+        path = args[1]
+        if path.endswith("/logs"):
+            return logs
+        if "/compare/" in path:
+            return comparison
+        if "/jobs?" in path:
+            return {"jobs": [job]}
+        return run
+
+    monkeypatch.setattr(probe, "gh", fake_gh)
+    monkeypatch.setattr(sys, "argv", ["probe", "--run-id", "1", "--merged-commit", "b" * 40])
+    expected = case in ("restored", "retired")
+    assert probe.main() == (0 if expected else 1)
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["passed"] is expected
+    if case == "retired":
+        assert verdict["restored_in_place_receipts"] == 1
