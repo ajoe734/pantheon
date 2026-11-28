@@ -1,0 +1,213 @@
+{
+  "task_id": "CI-DISCOVERY-PROBE-TEST-DATED-WORLD-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "class": "RC1 Required check that fails under CI load",
+  "base_sha": "8f7e84d7a8db7045a52550a140c80e573f6d994c",
+  "source_status": "blocked_on_incorrect_acceptance_contract; unreviewed anchor only",
+  "hosted_status": "not_run; operator acceptance task owns hosted verification",
+  "blocker": {
+    "acceptance_item": 4,
+    "required_correction": "Replace the asserted 10:00Z through 17:35Z pass window with the measured inclusive 09:58:00Z through 17:30:00Z window, or supply the different fixture/source identity for the brief's claimed window. Task brief explicitly requires blocking rather than working around an incorrect item.",
+    "reported_window": "2026-11-28T10:00Z to 2026-11-28T17:35Z passed, failed outside",
+    "measured_window": "2026-11-28T09:58:00Z through 2026-11-28T17:30:00Z inclusive",
+    "explanation": "gate_attempts admits the 10:03Z search up to five minutes in the future (_within). distillation_dead_letters rejects checked_at=11:30Z only when age exceeds six hours.",
+    "dependency": "PR #8031 is already merged and contained by HEAD; this is an external acceptance-contract hold, not a task dependency."
+  },
+  "incident": {
+    "pr": 8028,
+    "run": 46137443319,
+    "job": 140956436076,
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/46137443319/job/140956436076",
+    "job_name": "Test sweep (shard 2)",
+    "github_observed_conclusion": "failure",
+    "first_fixed_NOW_commit": "44fa5d52a",
+    "first_fixed_NOW": "2026-11-28T12:00:00Z",
+    "provenance": "Task brief supplies incident attribution. gh run view confirmed the failed job; git show 44fa5d52a:acceptance/test_discovery_pipeline_day.py confirmed NOW and the misleading wall-clock comment.",
+    "predecessor": "PR #8031 already replaced the dated subprocess world with fixed 2020-01-01. This task's unreviewed change replaces that fixed date with a runtime-relative stale world."
+  },
+  "clock_reproduction": {
+    "interpreter": ".venv-pantheon/bin/python3",
+    "method": "Import acceptance.test_discovery_pipeline_day as t; for each aware UTC moment call t.dpd.judge(t.good_board(), t.good_health(), moment), retaining verdict and failed_stages. No clock monkeypatch or system clock change.",
+    "observations": [
+      [
+        "2026-11-28T09:57:00Z",
+        "failed",
+        [
+          "gate_attempts"
+        ]
+      ],
+      [
+        "2026-11-28T09:58:00Z",
+        "passed",
+        []
+      ],
+      [
+        "2026-11-28T10:00:00Z",
+        "passed",
+        []
+      ],
+      [
+        "2026-11-28T12:00:00Z",
+        "passed",
+        []
+      ],
+      [
+        "2026-11-28T17:30:00Z",
+        "passed",
+        []
+      ],
+      [
+        "2026-11-28T17:30:01Z",
+        "failed",
+        [
+          "distillation_dead_letters"
+        ]
+      ],
+      [
+        "2026-11-28T17:34:00Z",
+        "failed",
+        [
+          "distillation_dead_letters"
+        ]
+      ],
+      [
+        "2026-11-28T17:35:00Z",
+        "failed",
+        [
+          "distillation_dead_letters"
+        ]
+      ],
+      [
+        "2026-11-28T17:36:00Z",
+        "failed",
+        [
+          "distillation_dead_letters"
+        ]
+      ]
+    ]
+  },
+  "unreviewed_changes": {
+    "scope": "Only acceptance/test_discovery_pipeline_day.py and this evidence manifest.",
+    "helper": "stale_world(now_utc) preserves good_board()/good_health() wire shapes and values while replacing all nine timestamp/date fields with UTC reference time minus 31 days (date-only values truncate toward midnight).",
+    "subprocess": "Uses stale_world(datetime.now(timezone.utc)); login POST, exact two GETs, exit 1, VERDICT failed and both secret-redaction assertions are unchanged.",
+    "regression": "One shared stale world is built relative to the earliest of the real UTC time and the three historical checkpoints, so it remains stale at all four even on future runs. judge is called at 2026-11-28T12:00Z, 10:00Z, 17:34Z and real_now. Explicit failed/reason assertions cover template_search:last_search_stale, governed_market_dataset:governed_snapshot_stale, templates_evaluated:evaluation_stale, distillation_dead_letters:distillation_state_stale.",
+    "assertion_changes": "No existing assertion weakened, removed or changed. New in-process assertions only.",
+    "unchanged": "NOW, other tests, acceptance/discovery_pipeline_day.py, acceptance/probes/discovery-pipeline and problem-register.md."
+  },
+  "validation": {
+    "provisioning": {
+      "command": "timeout 120s python3 scripts/dev/provision_python_distribution.py",
+      "exit": 0
+    },
+    "initial_system_python": {
+      "command": "timeout 180s python3 -m pytest acceptance/test_discovery_pipeline_day.py -q",
+      "exit": 1,
+      "reason": "System interpreter has no pytest; corrected using the governed checkout-scoped provisioning script."
+    },
+    "full_file": {
+      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest acceptance/test_discovery_pipeline_day.py -q",
+      "exit": 0,
+      "passed": 57,
+      "warnings": 2,
+      "duration_seconds": 19.07,
+      "clock": "Real system UTC clock unchanged; run on 2026-11-28 around 12:25Z. Existing jsonschema RefResolver deprecation warnings only."
+    },
+    "five_consecutive_runs": "not run; contract blocker discovered after the first full-file run. Acceptance item 6 remains incomplete.",
+    "git_diff_check": {
+      "command": "git diff --check",
+      "exit": 0
+    },
+    "terminal_collection": "Provisioning and pytest session terminal output collected with exit 0; no verification process left running."
+  },
+  "other_probe_test_inventory": {
+    "search": "rg -n 'subprocess|\\.main\\(' acceptance/test_*.py, followed by inspection of entry points, test helpers, fixtures and probe clock use. Matching fixed-date main/subprocess paths listed below; skips/auth failures without served fixed fixtures are excluded.",
+    "fixed_fixture_main_paths": [
+      {
+        "file": "acceptance/test_paper_risk_policy_binding.py",
+        "tests": [
+          "test_http_main_uses_policy_reader_only_for_approval_get",
+          "test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token",
+          "test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads"
+        ],
+        "real_date_dependent": true,
+        "reason": "All call probe.main() without now, serve evidence() approval decided_at=2026-11-20T00:00Z and expires_at=2026-12-01T00:00Z, and assert exit 0. approved_mapping rejects future decisions or expiry <= real now. This will fail on/after 2026-12-01 (also before decided_at).",
+        "proof": "Same evidence() and probe.run() at injected 2026-11-19T23:59:59Z => passed=false, failed=[fixture-persona:required_profile_mapping_unresolved]; at 2026-11-28T12:00Z => passed=true; at 2026-12-01T00:00Z => passed=false with the same reason. No remote transport executed."
+      },
+      {
+        "file": "acceptance/test_pool_risk_snapshot_day.py",
+        "tests": [
+          "test_pending_exits_zero"
+        ],
+        "real_date_dependent": false,
+        "reason": "main uses real now only for report checked_at. Session is selected from released decision days or other-pool snapshots, not wall-clock freshness."
+      },
+      {
+        "file": "acceptance/test_trading_pulse_operator.py",
+        "tests": [
+          "test_stage_viewer_contract_verifies_tenant_without_extra_environment"
+        ],
+        "real_date_dependent": false,
+        "reason": "Fixed AT/START fixture; comparison of owner and DTO evidence, no calendar clock. time.monotonic bounds read budget only."
+      },
+      {
+        "file": "acceptance/test_mgmt_strategy_meeting_research_readable.py",
+        "tests": [
+          "test_probe_main_against_local_fixture_server"
+        ],
+        "real_date_dependent": false,
+        "reason": "Recorded dated page shapes; predicate/count checks only, no wall-clock freshness."
+      },
+      {
+        "file": "acceptance/test_mgmt_registry_pages_readable.py",
+        "tests": [
+          "test_all_checks_pass_on_recorded_shapes",
+          "test_each_check_fails_on_its_defect_and_names_route_and_owner",
+          "test_default_view_null_counts_names_default_view_owner",
+          "test_default_view_hosted_shape_passes_when_total_is_visible_minus_hidden_retired",
+          "test_every_probe_request_is_inside_the_real_route_bounds",
+          "test_artifacts_follow_next_page_token_and_fail_on_a_later_page",
+          "test_artifacts_page_size_above_route_bound_would_fail_read",
+          "test_viewer_role_denial_is_denied_not_failed",
+          "test_unreadable_route_fails_that_check_only",
+          "test_no_running_strategy_is_not_exercised_not_passed",
+          "test_every_route_the_probe_reads_is_registered_in_the_bff_application"
+        ],
+        "real_date_dependent": false,
+        "reason": "These call helper run(capsys), which calls probe.main on recorded page shapes. Count, scope and owner-consistency predicates only; monotonic clock measures duration/budget."
+      }
+    ],
+    "exclusions": [
+      "discovery stdlib subprocess test builds live dates from real now; other discovery main calls inject now=NOW; missing-variable subprocess skips before fixtures.",
+      "test_paper_risk_journey_day main fixture test patches day.datetime with a fixed Clock.",
+      "persona-day, daily-bars-volume, persona-risk-profile-change, paper-risk-journey and mgmt-evolution main tests skip or fail credentials/auth/read before serving dated fixtures.",
+      "persona-pool-member-rules, persona-member-book-admission, meeting-review-disposition, meeting-action-followthrough and trade-journey-readable subprocess tests exercise missing variables or unreachable loopback endpoints, not served fixed-date fixtures.",
+      "test_acceptance_bff_data_dir subprocesses import conftest/BFF and do not execute a probe."
+    ]
+  },
+  "residual_findings": [
+    {
+      "id": "RF1",
+      "scope": "acceptance/test_paper_risk_policy_binding.py",
+      "tests": [
+        "test_http_main_uses_policy_reader_only_for_approval_get",
+        "test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token",
+        "test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads"
+      ],
+      "finding": "Three probe.main tests use a real clock with fixed approval validity, expiring 2026-12-01T00:00Z; all expect pass. Left unchanged per task scope. Coordinator must attach to the owning register class before closing the chain."
+    }
+  ],
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_persistent_runtime_writers": 0,
+    "new_workflow_inputs": 0,
+    "hosted_cadence": "unchanged; test-only",
+    "hosted_growth_per_day_bytes": 0,
+    "hosted_storage_cap_added_bytes": 0,
+    "hosted_cleanup": "No new hosted storage; existing cleanup unchanged.",
+    "files": "Only one required static evidence manifest is added to source control; no new runtime file or writer. Existing test provisioning/cache and acceptance conftest cleanup unchanged.",
+    "probe_source_changed": false
+  },
+  "next": "Coordinator corrects the acceptance window (or supplies its exact differing fixture); owner resumes, completes five consecutive full-file passes, refreshes evidence, and submits exact-head review to Antigravity. No review approval, merge, deployment or acceptance claimed."
+}
