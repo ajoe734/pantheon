@@ -87,6 +87,10 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
     PostgresWorkshopStore,
 )
 
+# Writer budget (docs/operations/storage-manifest.json runtime_budgets): the
+# paper execution owner executes at most this many intents per trader per
+# Taipei day and rejects the rest with reason_code ``daily_cap``.
+PAPER_INTENT_DAILY_CAP = 50
 
 _orig_store_record_trader_decision = TradingRoomStore.record_trader_decision
 
@@ -549,6 +553,10 @@ class TradingRoomService:
                 intent_id=intent_ref,
                 x_request_id=x_request_id,
             )
+            if shadow_lock.get("human_decision_id"):
+                intent.setdefault("metadata", {})["human_decision_id"] = str(
+                    shadow_lock["human_decision_id"]
+                )
         try:
             self.store.record_trader_decision(
                 decision_event_id, decision_record, expected_event=event, intent=intent,
@@ -1290,6 +1298,10 @@ class TradingRoomService:
         handoff["state"] = "submitted"
         handoff["target_queue"] = stage_rule["target_queue"]
         handoff["updated_at"] = handoff.get("updated_at") or self.utc_now()
+        if stage_rule["target_queue"] == "paper_execution":
+            handoff["paper_execution"] = self._paper_execution_block(
+                intent=intent, body=body, identity=identity
+            )
         self.store.upsert_handoff(handoff)
         return {
             "handoff_id": body.handoff_id,
@@ -1300,6 +1312,134 @@ class TradingRoomService:
             "state": "submitted",
             "no_order_route_proof": "agora_request_only_no_order_route",
         }
+
+    # -----------------------------------------------------------------------
+    # Paper execution (AGORA-PAPER-INTENT-EXECUTION-20261127)
+    # -----------------------------------------------------------------------
+
+    _PAPER_BUY_ACTIONS = {"enter": "buy", "add": "buy", "reduce": "sell", "exit": "sell"}
+
+    def _paper_execution_block(
+        self,
+        *,
+        intent: Dict[str, Any],
+        body: GovernedIntentHandoffRequest,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        """Validate a trader-confirmed paper request and record what the paper
+        execution owner needs. Agora records the request only; it never routes
+        an order, holds a broker credential or touches capital."""
+
+        def _reject(reason: str, message: str) -> None:
+            raise self.bff_error(409, "TRADING_INTENT_HANDOFF_NOT_ALLOWED", message, reason)
+
+        metadata = intent.get("metadata") or {}
+        if str(metadata.get("decision") or "") not in {"approve", "modify"}:
+            _reject(
+                "paper_intent_not_confirmed",
+                "Only a trader-confirmed decision (approve or modify) can execute in paper",
+            )
+        proposal = body.action_proposal
+        if proposal is None:
+            _reject("paper_order_missing", "A paper handoff requires action_proposal")
+        side = self._PAPER_BUY_ACTIONS.get(str(proposal.action or ""))
+        if side is None:
+            _reject("paper_action_not_executable", "action must be enter, add, reduce or exit")
+        if str(proposal.direction or "").strip().lower() == "short":
+            _reject("paper_short_not_supported", "Short paper orders are not supported")
+        symbol = str(proposal.symbol or "").strip()
+        subject_symbol = str((intent.get("subject") or {}).get("symbol") or "").strip()
+        if not symbol:
+            _reject("paper_symbol_missing", "action_proposal.symbol is required")
+        if subject_symbol and subject_symbol != symbol:
+            _reject("paper_symbol_mismatch", "action_proposal.symbol must match the intent subject")
+        quantity = proposal.quantity
+        if quantity is None or not (quantity > 0) or quantity != quantity or quantity == float("inf"):
+            _reject("paper_quantity_invalid", "action_proposal.quantity must be a positive number of shares")
+        limit_price = proposal.limit_price
+        if limit_price is not None and (
+            not (limit_price > 0) or limit_price != limit_price or limit_price == float("inf")
+        ):
+            _reject("paper_limit_price_invalid", "action_proposal.limit_price must be positive")
+        scope = _workspace_scope(identity)
+        from services.control_plane.bff.agora.servant.router import _stable_servant_persona_id
+
+        order: Dict[str, Any] = {
+            "symbol": symbol,
+            "action": proposal.action,
+            "side": side,
+            "quantity": float(quantity),
+            "quantity_type": "SHARES",
+            "order_type": "limit" if limit_price is not None else "market",
+        }
+        if limit_price is not None:
+            order["limit_price"] = float(limit_price)
+        block: Dict[str, Any] = {
+            "environment": "paper",
+            "owner": {
+                "tenant_id": scope["tenant_id"],
+                "user_id": scope["user_id"],
+                "servant_persona_id": _stable_servant_persona_id(
+                    tenant_id=scope["tenant_id"], agora_user_id=scope["user_id"]
+                ),
+            },
+            "order": order,
+            "daily_cap": PAPER_INTENT_DAILY_CAP,
+        }
+        if metadata.get("human_decision_id"):
+            block["decision_lock_ref"] = str(metadata["human_decision_id"])
+        if intent.get("linked_event_ids"):
+            block["decision_event_id"] = str(intent["linked_event_ids"][0])
+        return block
+
+    def list_paper_execution_handoffs(self, *, tenant_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.store.list_paper_execution_handoffs(tenant_id=tenant_id, limit=limit)
+
+    def write_paper_execution_state(
+        self,
+        *,
+        handoff_id: str,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        actor: str,
+    ) -> Tuple[Dict[str, Any], bool]:
+        now = self.utc_now()
+        stamped = {**result, "updated_by": actor}
+        try:
+            handoff, changed = self.store.apply_paper_execution_state(
+                handoff_id,
+                tenant_id=tenant_id,
+                state=state,
+                result=stamped,
+                updated_at=now,
+            )
+        except ValueError as exc:
+            raise self.bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                f"Paper execution handoff {handoff_id!r} cannot move to '{state}'",
+                str(exc),
+            ) from exc
+        if handoff is None:
+            raise self.bff_error(
+                404, "NOT_FOUND", f"Paper execution handoff {handoff_id!r} not found", "handoff_not_found"
+            )
+        if changed:
+            owner = (handoff.get("paper_execution") or {}).get("owner") or {}
+            _tr_publish(
+                {"tenant_id": str(owner.get("tenant_id") or ""), "user_id": str(owner.get("user_id") or "")},
+                "trading_room.intent.paper_execution",
+                {
+                    "handoff_id": handoff_id,
+                    "intent_id": handoff.get("intent_id"),
+                    "state": state,
+                    "reason_code": result.get("reason_code"),
+                    "no_order_route_proof": "agora_request_only_no_order_route",
+                },
+                now,
+            )
+        return handoff, changed
 
     def withdraw_intent(
         self,
@@ -2173,7 +2313,12 @@ class TradingRoomService:
 
     def _handoff_stage_rule(self, stage: str) -> Dict[str, str]:
         return {
-            "paper": {"handoff_type": "paper_validation_request", "target_queue": "management_governance"},
+            # AGORA-PAPER-INTENT-EXECUTION-20261127: the paper stage executes the
+            # trader's confirmed decision in the trader's own paper book through
+            # the paper execution lane (paper-signal-producer). The former
+            # paper_validation_request -> management_governance target had no
+            # reader and is removed.
+            "paper": {"handoff_type": "paper_execution_request", "target_queue": "paper_execution"},
             "canary": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
             "live": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
         }[stage]

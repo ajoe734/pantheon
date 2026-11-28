@@ -3941,6 +3941,12 @@
     },
     {
       "method": "GET",
+      "path": "/internal/agora/paper-execution/handoffs",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/internal/agora/platform-source",
       "family": "unknown",
       "status": "implemented"
@@ -4141,6 +4147,12 @@
     {
       "method": "POST",
       "path": "/internal/agora/dataset-handoffs/{param}/ack",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/agora/paper-execution/handoffs/{param}/state",
       "family": "unknown",
       "status": "implemented"
     },

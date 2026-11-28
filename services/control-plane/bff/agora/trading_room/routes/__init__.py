@@ -24,12 +24,14 @@ from .common import (
 from .workspaces import build_workspaces_router
 from .decisions import build_decisions_router
 from .intents import build_intents_router
+from .paper_execution import build_paper_execution_router
 
 __all__ = [
     "TradingRoomRouteContext",
     "build_workspaces_router",
     "build_decisions_router",
     "build_intents_router",
+    "build_paper_execution_router",
     "TradingDecisionEvent",
     "TradingRoomAggregate",
     "QueueSummary",
