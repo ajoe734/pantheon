@@ -1,0 +1,101 @@
+{
+  "task_id": "ALPHA-TEMPLATE-DEFINITION-CHECKSUM-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "register_class": "RC2 / Strategy discovery produces nothing",
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target": "dev",
+    "source_review": "pending independent review",
+    "hosted": "pending operator acceptance; no VM/SSH access used"
+  },
+  "incident": {
+    "facts_source": "operator-supplied task brief, hosted read-only observations 2026-11-28; not re-probed by worker",
+    "release_root": "46102871850",
+    "demands": [
+      "rd-796e24e24bf2055d3c42",
+      "rd-975bb89106f1c696a680"
+    ],
+    "search_times": [
+      "2026-11-27T10:07:59Z",
+      "2026-11-27T10:11:48Z"
+    ],
+    "first_run": "rrun-20261127-032",
+    "registered": 182,
+    "evaluated_time_series": 171,
+    "draft_cross_sectional": 11,
+    "attempts": 0,
+    "excluded_by_reason": {
+      "template_checksum_mismatch": 171
+    },
+    "cause": "Evaluation changed metadata.alpha_template lifecycle fields without changing the stored seed checksum; whole-record verification falsely rejected every evaluated template."
+  },
+  "checksum_contract": {
+    "function": "services.registry.alpha_template.alpha_template_definition_checksum",
+    "canonicalization": "Validate/deep-copy; status=draft, evaluation_ref=null, duplicate_of absent; hash using the unchanged alpha_template_checksum serialization.",
+    "registration_and_search": "Both use the one canonical function; no second lifecycle field list. Whole-record alpha_template_checksum remains available for original seed-digest verification.",
+    "seed_compatibility": "182/182 canonical definition digests equal the original validated seed digests; 171 evaluation writes preserve stored checksums. No row rewrite or migration.",
+    "receipt_binding": "template_checksum binds every validated definition field (expression, inputs and availability lags, parameters, identity, family, scope and provenance/licensing included); runtime evaluation status/ref/duplicate linkage are excluded. Search verifies equality to registry checksum before compiling the same validated definition; the receipt records that checksum. It does not attest gate quality or approval.",
+    "tenant_non_draft": "New tenant registrations use the canonical definition checksum regardless of initial lifecycle status while retaining that status in metadata. Legacy non-draft registrations with a whole-record lifecycle digest fail closed as checksum mismatch; no fallback, rewrite or migration. Operator reports none hosted."
+  },
+  "search_and_board": {
+    "zero_integrity_attempts": "template_search_unavailable:template_integrity_mismatch:<integrity excluded count>; actual worker failure handling marks both run and task failed.",
+    "exclusions": "Each search persist stores excluded_by_reason grouped from the recorded excluded rows, including intermediate receipt writes and exception exits.",
+    "per_run_count": "templates_attempted counts newly recorded terminal receipts; demand attempts remain cumulative for deduplication and registration retries.",
+    "board": "attempt_count stays number of search runs. templates_attempted and excluded_by_reason describe latest run. Legacy runs derive counts from that run's attempts/excluded; new runs use explicit per-run aggregates."
+  },
+  "probe": {
+    "path": "acceptance/probes/discovery-pipeline",
+    "new_probe": false,
+    "behavior": "template_search exposes templates_attempted and excluded_by_reason, fails last_search_attempted_nothing on zero attempts with integrity exclusions even for legacy search_completed. gate_attempts requires >0 templates_attempted for any working template-search result.",
+    "fixture": "Reconstructed from supplied 11/27 hosted facts: the two demand ids/timestamps, 171 exclusions, empty attempts and completed status. Both stages fail with zero attempts and pass with one attempted template; tenant integrity reason also tested. BFF test uses real library template ids and four run records; it does not invent the unknown second run id."
+  },
+  "runtime_budget": {
+    "new_jobs_or_writers": 0,
+    "existing_writer": "ResearchDemandStore.record_template_search and existing Research run persistence; no new file/table/queue/cache or cadence.",
+    "cadence": "Existing weekday persona cycle 10:00Z, at most one search per open demand per cycle, worker run budget 1; family/run evaluation guards unchanged.",
+    "size_measurement": "Compact UTF-8 JSON: extra templates_attempted plus excluded_by_reason = 81 bytes for checksum mismatch:171; 188 bytes for all five existing exclusion reasons each at 182 plus attempted=50. A board item adds the same fields, no persistence.",
+    "hosted_count_and_growth": "For 3 personas x 1 open demand: <=564 extra bytes per trading day in retained run summaries; <=564 bytes current aggregate footprint in demands. Latest demand counts replace the prior map, not append. Scale linearly with open demands.",
+    "cap_and_cleanup": "Five fixed exclusion reason keys, counts bounded by supplied template rows (hosted library 182), each extra aggregate <=188 measured bytes at hosted scale. Existing demand TTL 30 days, receipts at most once per template (171 eligible); closed gate/artifact bodies compact 60 days after expires_at. Current map is overwritten per run. Historical run retention is unchanged; no new history cap or cleanup is claimed.",
+    "manifest": "Existing registered writer: docs/operations/storage-manifest.json runtime budget research_demands.json (template search receipts). No new writer to register."
+  },
+  "hosted_acceptance": {
+    "status": "pending; source tests do not establish deployed or accepted state",
+    "expected_first_cycle": "2026-11-30T10:00:00Z, provided this source is released before the cycle",
+    "owner": "existing operator acceptance task after release",
+    "read_only_acceptance": "Run existing discovery-pipeline probe after the first weekday cycle. For each open demand, require latest search >=1 actual template attempt OR a typed reason other than template_integrity_mismatch. Search and gate stages must reject integrity-excluded empty searches.",
+    "deadline_risk": "Worker cannot assert hosted delivery before the deadline: independent review, merge, deployment and operator verification remain pending. If the release misses 10:00Z the next existing weekday cycle is the acceptance opportunity; do not rerun evaluation or rewrite rows."
+  },
+  "assertion_changes": [
+    "Existing mismatch test strengthened with unavailable reason and per-reason counts; no assertion removed.",
+    "good_board adds templates_attempted=1 and empty exclusion map, making its existing working gate refusal explicit under the new contract; existing assertions are unchanged.",
+    "No tests deleted or weakened. Initial new-test failures (dataclass serialization and unsupported neg operator) corrected to RegistryEntry.to_dict and a valid changed mul expression."
+  ],
+  "validation": {
+    "status": "passed local functional checks; not hosted acceptance",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "exit_status": 0,
+        "result": "Checkout-scoped .venv-pantheon provisioned and verified from a foreign cwd without PYTHONPATH."
+      },
+      {
+        "command": "timeout 240 .venv-pantheon/bin/python -m pytest -q services/registry/test_alpha_template.py services/research/tests/test_template_demand_search.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py acceptance/test_discovery_pipeline_day.py",
+        "exit_status": 0,
+        "result": "132 passed, 257 deprecation warnings in 75.31s; all terminal output collected."
+      },
+      {
+        "command": "git diff --check",
+        "exit_status": 0,
+        "result": "No whitespace errors."
+      },
+      {
+        "command": "Local seed-digest and compact JSON byte measurements using load_library_templates/validate_alpha_template/alpha_template_checksum/alpha_template_definition_checksum/json.dumps",
+        "exit_status": 0,
+        "result": "182 templates = 171 time_series + 11 cross_sectional; 182 unchanged seed digests; 81 bytes checksum-only aggregate, 188 bytes all-five-reason aggregate."
+      }
+    ],
+    "earlier_batches": "System python lacked pytest; first provisioned collection failed due to missing new pytest import; next batch terminal result 2 failed/129 passed (new test errors corrected). These failed batches are not counted as passing."
+  },
+  "residual_findings": []
+}

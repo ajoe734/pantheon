@@ -773,7 +773,7 @@ def test_altered_definition_is_still_excluded_without_spending_trial(tmp_path, f
                 if v['entry']['metadata']['alpha_template']['template_id'] == 'qlib_alpha158:KMID')
     template = kmid['entry']['metadata']['alpha_template']
     if field == 'expression':
-        template[field] = {'op': 'neg', 'args': [template[field]]}
+        template[field]['op'] = 'mul'
     elif field == 'parameters':
         # Parameters unused by KMID are invalid; use a real windowed seed instead.
         kmid = next(v for v in _hosted_evaluated_entries()
