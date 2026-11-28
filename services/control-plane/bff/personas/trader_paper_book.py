@@ -1084,6 +1084,35 @@ def _ensure_paper_book_risk_policy(
     return updated_pool, deepcopy(dict(after_res))
 
 
+def _fence_authority_generation(
+    leased: ProvisioningRecord,
+    expected: ProvisioningRecord,
+    ids: ProvisioningIds,
+) -> None:
+    """Reject authority coordination whose ``ids`` are not the leased row's live generation."""
+    if (
+        not is_trader_paper_book_ledger_record(leased)
+        or leased.tenant_id != expected.tenant_id
+        or leased.idempotency_key != expected.idempotency_key
+        or leased.persona_id != expected.persona_id
+    ):
+        raise PersonaProvisioningCoordinationError(
+            "Trader paper book ledger row no longer matches the book whose authorities "
+            "are being coordinated",
+            reason_code=TRADER_PAPER_BOOK_GENERATION_STALE,
+        )
+    current = trader_paper_book_generation(leased)
+    if (
+        trader_paper_book_generation_ids(leased.tenant_id, leased.persona_id, current) != ids
+        or _book_generation_replacement_started(leased)
+    ):
+        raise PersonaProvisioningCoordinationError(
+            f"Trader paper book authority ids are stale: the ledger is at generation "
+            f"{current} (state {leased.state!r}); retry ensure",
+            reason_code=TRADER_PAPER_BOOK_GENERATION_STALE,
+        )
+
+
 def _coordinate_paper_book_deploy_authorities(
     coordinator: PersonaProvisioningCoordinator,
     record: ProvisioningRecord,
@@ -1110,6 +1139,11 @@ def _coordinate_paper_book_deploy_authorities(
             reason_code="provisioning_lease_busy",
         )
     try:
+        # Fence under the lease, before ANY owner mutation or ledger checkpoint:
+        # ``ids`` were derived from an earlier read, and a concurrent ensure may
+        # have replaced the generation since. Never checkpoint one generation's
+        # authority receipts into another generation's row.
+        _fence_authority_generation(leased, record, ids)
         leased = coordinator._coordinate_strategy_spec(leased, ids, baseline=True)
         leased = coordinator._coordinate_approval_proposal(leased, ids, baseline=True)
         leased = coordinator._coordinate_approval_review(leased, ids, baseline=True)

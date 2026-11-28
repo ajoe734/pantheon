@@ -135,7 +135,7 @@
         "growth_per_day_append": "0 B/day steady state; one replacement appends ~61.5 KB once per replaced legacy book (hosted has exactly 1)",
         "cap_append": "TRADER_PAPER_BOOK_MAX_GENERATIONS=3 per ledger row enforced in code (trader_paper_book_generation_cap): at most 2 retired generations (<= ~123 KB), row <= ~185 KB",
         "cleanup_append": "no cleanup job: retired generations are the audit trail of retired owner ids, kept for the life of the row and bounded by the generation cap",
-        "status": "not registered by this task; needs the owning lane (task owner of docs/operations/storage-manifest.json) before the budget is complete"
+        "status": "not registered: docs/operations/storage-manifest.json is outside this task's artifact contract and artifact-contract add is limited to todo/blocked tasks by Human/Ops; this task is blocked on Human/Ops to either add the manifest to this task's artifacts (then this lane applies the exact text above) or register it through an owning lane. The runtime budget is NOT complete until that commit exists."
       }
     },
     "AC6_hosted_proof_after_deploy": {
@@ -154,6 +154,11 @@
     ],
     "round_3": [
       "same 10 manifest suites -> 326 passed (52 in the three trader paper book files + 274 in the other seven, 4 skipped), exit 0; after merging origin/dev ec4b1fe3e trader/directory suites 67 passed, 4 skipped",
+      "git diff --check -> clean"
+    ],
+    "round_4": [
+      "same 10 manifest suites -> 327 passed, 4 skipped, 78.23s, exit 0 (adds test_stale_authority_coordination_never_checkpoints_old_ids_into_newer_generation)",
+      "reviewer reproduction /tmp/test_paper_book_review_authority_fence.py -> 1 passed; request A raises trader_paper_book_generation_stale, generation=2 state=succeeded, changed_reference_keys=[]",
       "git diff --check -> clean"
     ]
   },
@@ -183,5 +188,11 @@
     ],
     "P2": "AC5 records serialized size, daily growth, cap (enforced in code) and cleanup/retention. The storage-manifest entry is outside this task's artifact contract and is handed to its owning lane with exact text (AC5.storage_manifest_registration_for_owning_lane).",
     "evidence_corrections": "AC7 corrected: the register row already cites this task. PR body rewritten to describe the generation replacement."
+  },
+  "review_round_4": {
+    "finding_P1": "_coordinate_paper_book_deploy_authorities acquired the CURRENT ledger row and checkpointed authority receipts for caller-supplied ids without validating generation/book scope, so a stale request could write generation-1 Registry/Governance/Deployment receipts into the completed generation-2 row.",
+    "fix": "_fence_authority_generation runs under the authority lease before ANY owner mutation or ledger checkpoint: it requires a book ledger row with the same tenant/persona/idempotency key, ids equal to trader_paper_book_generation_ids(current generation), and no replacement in progress; otherwise it raises trader_paper_book_generation_stale, the lease is released with the row unchanged, and the next ensure converges on the live generation.",
+    "regression": "test_stale_authority_coordination_never_checkpoints_old_ids_into_newer_generation (two independent coordinators; generation-1 DeploymentPlan removed; A paused before the authority lease; B finishes generation 2; A rejected with zero owner writes and the generation-2 row byte-identical; a later ensure from A returns generation 2).",
+    "finding_P2": "Storage-manifest registration still outstanding; PR body claim 'Registered' corrected to 'not registered, blocked on Human/Ops artifact-contract or owning lane'."
   }
 }

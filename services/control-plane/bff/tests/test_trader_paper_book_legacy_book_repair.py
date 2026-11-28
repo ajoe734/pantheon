@@ -502,6 +502,85 @@ def test_stale_ensure_interleaved_with_completed_replacement_never_touches_newer
     assert readback["runtime_binding_id"] == gen2_bindings[0].binding_id
 
 
+def test_stale_authority_coordination_never_checkpoints_old_ids_into_newer_generation(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 4 P1 regression: request A derives generation 1 ids and reaches
+    missing-authority recovery (its DeploymentPlan is gone), pauses immediately before
+    ``_coordinate_paper_book_deploy_authorities`` acquires its lease, request B (an
+    independent coordinator) restores authorities and finishes the replacement to
+    generation 2, then A resumes. A must be fenced under its lease before ANY owner
+    mutation or ledger checkpoint: the completed generation-2 row is left byte-identical
+    and no generation-1 authority object is (re)created by A."""
+    seeded = _seed_recorded_legacy_book(
+        owner_stack, monkeypatch, status="paused", session_admission=MARKET_INPUT_MISSING_PAUSE
+    )
+    key = seeded["legacy"].idempotency_key
+    gen1 = seeded["ids"]
+    coordinator_a = seeded["coordinator"]
+    coordinator_a.lease_owner = "request-a"
+    coordinator_b = owner_stack["coordinator_for_tenant"](HOSTED_TENANT)
+    coordinator_b.lease_owner = "request-b"
+    assert coordinator_a is not coordinator_b and coordinator_a.store is coordinator_b.store
+    authority_objects = coordinator_a.transport._authority.objects
+    authority_objects.pop(("deployment", f"/api/deployment/plans/{gen1.deployment_plan_id}"))
+
+    original_coordinate = trader_paper_book._coordinate_paper_book_deploy_authorities
+    snapshots: List[Any] = []
+    a_owner_writes: List[Any] = []
+
+    def _paused_coordinate(coordinator: Any, record: Any, ids: Any) -> Any:
+        if coordinator is coordinator_a and not snapshots:
+            assert ids == gen1
+            _ensure_hosted(owner_stack, coordinator_b)
+            row = coordinator_b.store.get(HOSTED_TENANT, key)
+            assert row.state == "succeeded"
+            assert row.references["book_generation"]["generation"] == 2
+            snapshots.append((row, dict(authority_objects)))
+            transport_a = coordinator_a.transport
+            for verb in ("post", "patch", "put"):
+                orig = getattr(transport_a, verb, None)
+                if not callable(orig):
+                    continue
+
+                def _spy(*args: Any, _verb: str = verb, _orig: Any = orig, **kwargs: Any) -> Any:
+                    a_owner_writes.append((_verb,) + tuple(args[:2]))
+                    return _orig(*args, **kwargs)
+
+                monkeypatch.setattr(transport_a, verb, _spy)
+        return original_coordinate(coordinator, record, ids)
+
+    monkeypatch.setattr(
+        trader_paper_book, "_coordinate_paper_book_deploy_authorities", _paused_coordinate
+    )
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        _ensure_hosted(owner_stack, coordinator_a)
+    assert exc.value.reason_code == trader_paper_book.TRADER_PAPER_BOOK_GENERATION_STALE
+
+    assert len(snapshots) == 1
+    row_before, objects_before = snapshots[0]
+    after = coordinator_b.store.get(HOSTED_TENANT, key)
+    assert after.state == "succeeded"
+    assert after.current_step == TRADER_PAPER_BOOK_PROVISIONED_STEP
+    assert after.references["book_generation"]["generation"] == 2
+    assert after.references == row_before.references
+    assert after.result == row_before.result
+    assert after.lease_owner is None
+    assert a_owner_writes == []
+    # B restored generation 1's authorities before retiring it; A wrote nothing on top.
+    assert dict(authority_objects) == objects_before
+
+    # The next ensure from A's coordinator converges on the live generation 2.
+    monkeypatch.setattr(
+        trader_paper_book, "_coordinate_paper_book_deploy_authorities", original_coordinate
+    )
+    book = _ensure_hosted(owner_stack, coordinator_a)
+    assert book["book_generation"] == 2
+    assert coordinator_a.store.get(HOSTED_TENANT, key).references == row_before.references
+
+
 def test_stale_generation_fence_refuses_retire_advance_and_finalize_without_writes(
     owner_stack: Dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
