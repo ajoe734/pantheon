@@ -979,6 +979,14 @@ class AgoraWriteService:
         assert_authorized("AgoraTraderReport", "purge", actor_roles)
         return self.store.purge_expired_trader_reports(now=now)
 
+    def list_active_trader_scopes(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[DictRecord]:
+        return self.store.list_active_trader_scopes(tenant_id=tenant_id, limit=limit)
+
     def extract_decision_lock_evidence(
         self,
         lock: Dict[str, Any],

@@ -1739,6 +1739,106 @@ class AgoraStore:
                     return DictRecord(claimed)
         return None
 
+    def list_active_trader_scopes(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[DictRecord]:
+        """List bounded active (tenant_id, user_id, strategy_id, servant_persona_id) scopes
+        from Agora owner tables (servant sessions, habit profiles, decision locks, and trader reports)
+        for the weekly post-attribution report tick.
+        """
+        clean_filter_tenant = str(tenant_id or "").strip()
+        users: set[tuple[str, str]] = set()
+        personas_by_user: Dict[tuple[str, str], str] = {}
+        strategies_by_user: Dict[tuple[str, str], set[str]] = {}
+
+        def _record(t_id: Any, u_id: Any, strat_id: Any = None, persona_id: Any = None) -> None:
+            t = str(t_id or "").strip()
+            u = str(u_id or "").strip()
+            if not t or not u:
+                return
+            if clean_filter_tenant and t != clean_filter_tenant:
+                return
+            users.add((t, u))
+            p = str(persona_id or "").strip()
+            if p and (t, u) not in personas_by_user:
+                personas_by_user[(t, u)] = p
+            s = str(strat_id or "").strip()
+            if s and s not in {"*", "__all__"}:
+                strategies_by_user.setdefault((t, u), set()).add(s)
+
+        for session in self._sessions.select_where(
+            "payload ->> 'mode' = %s",
+            (SERVANT_SESSION_MODE,),
+            tail_sql="ORDER BY payload ->> 'updatedAt' DESC LIMIT 100",
+        ):
+            if str(session.get("status") or "").lower() == "closed":
+                continue
+            t_id = session.get("tenantId") or session.get("tenant_id")
+            u_id = session.get("userId") or session.get("user_id")
+            p_id = session.get("servantPersonaId") or session.get("personaId")
+            s_ref = (
+                session.get("strategyRef")
+                or session.get("strategy_ref")
+                or session.get("strategyId")
+                or session.get("strategy_id")
+            )
+            _record(t_id, u_id, s_ref, p_id)
+            for msg in session.get("messages") or []:
+                if not isinstance(msg, dict):
+                    continue
+                meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+                cmd = meta.get("command_context") if isinstance(meta.get("command_context"), dict) else {}
+                if cmd.get("strategy_id"):
+                    _record(t_id, u_id, cmd.get("strategy_id"), p_id)
+
+        for row in self._habit_profiles.list_all():
+            _record(row.get("tenant_id"), row.get("user_id"), row.get("strategy_id"))
+
+        for row in self._decision_locks.list_all():
+            ti = row.get("trader_identity") if isinstance(row.get("trader_identity"), dict) else {}
+            snap = row.get("decision_time_snapshot") if isinstance(row.get("decision_time_snapshot"), dict) else {}
+            _record(
+                row.get("tenant_id") or ti.get("tenant_id"),
+                row.get("user_id") or row.get("agora_user_id") or ti.get("user_id") or ti.get("agora_user_id"),
+                row.get("strategy_id") or snap.get("strategy_id"),
+            )
+
+        for row in self._trader_reports.list_all():
+            _record(
+                row.get("tenant_id"),
+                row.get("user_id"),
+                row.get("strategy_id"),
+                row.get("servant_persona_id"),
+            )
+
+        out: List[DictRecord] = []
+        for t, u in sorted(users):
+            persona_id = personas_by_user.get((t, u)) or f"servant:{t}:{u}"
+            strats = sorted(strategies_by_user.get((t, u)) or [])
+            if strats:
+                for s in strats:
+                    out.append(
+                        DictRecord({
+                            "tenant_id": t,
+                            "user_id": u,
+                            "strategy_id": s,
+                            "servant_persona_id": persona_id,
+                        })
+                    )
+            else:
+                out.append(
+                    DictRecord({
+                        "tenant_id": t,
+                        "user_id": u,
+                        "strategy_id": None,
+                        "servant_persona_id": persona_id,
+                    })
+                )
+        return out[: max(1, int(limit))]
+
 
 def build_agora_store(
     *,

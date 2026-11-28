@@ -520,6 +520,173 @@ def test_weekly_attribution_runs_without_persona_cycle_and_produces_weekly_trade
     assert result["reports"][0]["attribution_run_id"] == f"attr-run-{TENANT}-2026W48"
 
 
+def test_worker_main_loop_tick_requests_weekly_attribution_via_http_port_and_produces_reports(
+    monkeypatch, tmp_path
+):
+    """Drive the real worker main loop (_run_servant_loop -> servant_worker.run_once)
+    with env-configured HttpAttributionPort (URL + runtime JWT) and active traders discovered
+    from the Agora owner, verifying idempotency per (tenant_id, iso_week) across ticks.
+    """
+    import http.server
+    import threading
+    import scripts.run_agora_interaction_worker as worker_launcher
+    from services.persona.meeting_triggers import HttpAttributionPort, attribution_port_from_env
+
+    sessions.FakeOwnerTable.reset()
+    owner = sessions._build_owner()
+
+    # Seed an active trader session and a decision lock for a second strategy in the Agora owner
+    owner.ensure_servant_session(
+        "sess-weekly-loop-1",
+        tenant_id=TENANT,
+        user_id=USER,
+        operator_id=USER,
+        persona_id=f"servant:{TENANT}:{USER}",
+        actor_roles=("trader",),
+        created_at="2026-11-27T08:00:00Z",
+    )
+    owner.append_session_message(
+        "sess-weekly-loop-1",
+        "msg-weekly-loop-1",
+        "檢視本週台積電部位",
+        USER,
+        ("trader",),
+        payload={
+            "role": "user",
+            "metadata": {"command_context": {"strategy_id": "strat_alpha", "page": "trading_room"}},
+        },
+        created_at="2026-11-27T08:01:00Z",
+    )
+    owner.create_decision_lock(
+        {
+            "human_decision_id": owner.store.decision_lock_id(TENANT, "dec-evt-beta-1"),
+            "decision_event_id": "dec-evt-beta-1",
+            "tenant_id": TENANT,
+            "user_id": USER,
+            "strategy_id": "strat_beta",
+            "decision": "accept",
+            "created_at": "2026-11-27T08:02:00Z",
+        },
+        actor_roles=("trader",),
+    )
+
+    discovered = owner.list_active_trader_scopes(tenant_id=TENANT)
+    assert {(d["user_id"], d["strategy_id"]) for d in discovered} == {
+        (USER, "strat_alpha"),
+        (USER, "strat_beta"),
+    }
+
+    received_requests: List[Dict[str, Any]] = []
+
+    class _AttributionHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+            payload = json.loads(raw)
+            received_requests.append(
+                {
+                    "method": "POST",
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization", ""),
+                    "tenant": self.headers.get("X-Tenant-Id", ""),
+                    "body": payload,
+                }
+            )
+            window_end = payload.get("window_end", "2026-11-22")
+            resp = json.dumps(
+                {
+                    "run_id": f"attr-http-{self.headers.get('X-Tenant-Id', TENANT)}-{window_end}",
+                    "status": "completed",
+                    "kind": payload.get("kind"),
+                    "window_end": window_end,
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _AttributionHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        attr_url = f"http://127.0.0.1:{server.server_port}"
+        monkeypatch.setenv("PANTHEON_ATTRIBUTION_API_URL", attr_url)
+        monkeypatch.delenv("PANTHEON_ATTRIBUTION_SERVICE_TOKEN", raising=False)
+        monkeypatch.delenv("EVALUATION_SERVICE_TOKEN", raising=False)
+        monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "unit-test-runtime-jwt-secret-32bytes!!")
+        monkeypatch.setenv("PANTHEON_TENANT_ID", TENANT)
+        monkeypatch.setattr(worker_launcher, "SERVANT_HEARTBEAT_PATH", tmp_path / "servant.hb")
+
+        port = attribution_port_from_env(tenant=TENANT)
+        assert isinstance(port, HttpAttributionPort)
+        assert port.configured is True
+
+        current_clock = ["2026-11-27T10:00:00Z"]
+        servant_worker = ServantTurnWorker(
+            owner=owner,
+            default_tenant_id=TENANT,
+            weekly_tick_interval_seconds=0.0,
+            clock=lambda: current_clock[0],
+        )
+
+        # Drive 3 ticks through the launcher's _run_servant_loop in ISO week 2026-W48
+        stop_event = threading.Event()
+        worker_launcher._run_servant_loop(
+            servant_worker,
+            stop_event,
+            poll_interval=0.001,
+            max_ticks=3,
+        )
+
+        # POST /api/attribution/runs was called exactly ONCE for (TENANT, 2026-W48) across 3 loop ticks
+        assert len(received_requests) == 1
+        req = received_requests[0]
+        assert req["path"] == "/api/attribution/runs"
+        assert req["tenant"] == TENANT
+        assert req["authorization"].startswith("Bearer ")
+        assert req["body"] == {"kind": "weekly", "window_end": "2026-11-22"}
+
+        # Both active strategies for the trader received 1 weekly post-attribution report
+        all_weekly = owner.list_trader_reports(
+            tenant_id=TENANT,
+            user_id=USER,
+            trigger="weekly_post_attribution",
+            limit=10,
+        )
+        assert len(all_weekly) == 2
+        assert {r["strategy_id"] for r in all_weekly} == {"strat_alpha", "strat_beta"}
+        for rep in all_weekly:
+            assert rep["attribution_run_id"] == f"attr-http-{TENANT}-2026-11-22"
+            assert rep["calendar_iso_week"] == "2026-W48"
+            _assert_every_number_has_owner_source_and_as_of(rep["sections"], "sections")
+
+        # Advance clock to next ISO week (2026-W49) and drive 2 more loop ticks -> 1 new attribution run + 2 new weekly reports
+        current_clock[0] = "2026-12-04T10:00:00Z"
+        worker_launcher._run_servant_loop(
+            servant_worker,
+            stop_event,
+            poll_interval=0.001,
+            max_ticks=2,
+        )
+        assert len(received_requests) == 2
+        assert received_requests[1]["body"] == {"kind": "weekly", "window_end": "2026-11-29"}
+        all_weekly_after = owner.list_trader_reports(
+            tenant_id=TENANT,
+            user_id=USER,
+            trigger="weekly_post_attribution",
+            limit=10,
+        )
+        assert len(all_weekly_after) == 4
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 # ---------------------------------------------------------------------------
 # AC4: Runtime budget cap (26 weekly), 7-day on-demand cleanup, and storage manifest
 # ---------------------------------------------------------------------------

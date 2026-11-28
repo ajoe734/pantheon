@@ -8,6 +8,7 @@ build_versions_router wrapper binding the shared admission context) is new.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Response
@@ -17,6 +18,8 @@ from ..events import _ws_publish
 from ..operations import CanonicalOperationError, bind_workshop_authorization
 from ..store import WorkshopVersionProjectionConflict
 from ..schemas import WorkshopVersionCreateRequest
+
+logger = logging.getLogger(__name__)
 
 
 def build_versions_router(
@@ -700,8 +703,13 @@ def build_versions_router(
                 change_reason=str(link.get("change_reason") or "") or None,
                 workshop_id=workshop_id,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to propose workspace revision on strategy version select (workshop_id=%s, version_id=%s): %s",
+                workshop_id,
+                version_id,
+                exc,
+            )
         return _command_response(
             receipt=receipt,
             resource=resource,

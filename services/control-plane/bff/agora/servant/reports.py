@@ -60,8 +60,15 @@ RUNTIME_BUDGET_SPEC: Dict[str, Any] = {
     "writer_id": "agora.trader_reports",
     "table": "agora.trader_reports",
     "owner": "agora",
+    "recurring_job": (
+        "ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py "
+        "(checks every 3600s, idempotent per tenant_id + ISO week, scans <= 50 active trader/strategy scopes, "
+        "requests POST /api/attribution/runs via HttpAttributionPort once per tenant per ISO week, "
+        "and writes at most 1 weekly report per active trader and strategy per ISO week)"
+    ),
     "cadence": (
-        "1 weekly report per active trader and strategy after weekly attribution "
+        "Weekly recurring tick (3600s check interval, fires at most once per tenant + ISO week) "
+        "producing 1 weekly report per active trader and strategy after weekly attribution "
         "+ at most 3 on-demand reports per trader per day"
     ),
     "max_row_bytes": TRADER_REPORT_MAX_BYTES,
@@ -71,6 +78,8 @@ RUNTIME_BUDGET_SPEC: Dict[str, Any] = {
     "weekly_cap_per_trader_strategy": TRADER_REPORT_WEEKLY_HISTORY_CAP,
     "ondemand_daily_cap_per_trader": TRADER_REPORT_ONDEMAND_DAILY_CAP,
     "ondemand_retention_days": TRADER_REPORT_ONDEMAND_RETENTION_DAYS,
+    "weekly_tick_interval_seconds": 3600,
+    "weekly_tick_max_trader_scopes": 50,
     "max_total_rows_hosted": 780,
     "max_total_bytes_hosted": 16384000,
     "cleanup": (
@@ -1037,7 +1046,8 @@ class TraderReportService:
             expires_at = _format_iso(_parse_iso(now) + timedelta(days=TRADER_REPORT_ONDEMAND_RETENTION_DAYS))
         iso_year, iso_wk, _ = end_dt.isocalendar()
         cadence_val = "weekly" if norm_trigger == "weekly_post_attribution" else "on_demand"
-        iso_week_val = str(attribution_run_id or f"{iso_year:04d}-W{iso_wk:02d}")
+        calendar_iso_week = f"{iso_year:04d}-W{iso_wk:02d}"
+        iso_week_val = str(attribution_run_id or calendar_iso_week)
 
         report: Dict[str, Any] = {
             "report_id": report_id,
@@ -1053,6 +1063,7 @@ class TraderReportService:
             "day": now[:10],
             "report_day": now[:10],
             "iso_week": iso_week_val,
+            "calendar_iso_week": calendar_iso_week,
             "window_start": win_start,
             "window_end": win_end,
             "window_days": int(window_days or 7),
@@ -1152,6 +1163,7 @@ class TraderReportService:
         clean_strategy = str(strategy_id or "").strip() or ALL_STRATEGIES_KEY
         now_dt = _parse_iso(now)
         iso_year, iso_week, _ = now_dt.isocalendar()
+        calendar_week = f"{iso_year:04d}-W{iso_week:02d}"
         run_id = attribution_run_id or f"attr-weekly-{tenant_id}-{iso_year}W{iso_week:02d}"
         existing = self.owner.list_trader_reports(
             tenant_id=tenant_id,
@@ -1161,7 +1173,11 @@ class TraderReportService:
             limit=5,
         )
         for row in existing:
-            if str(row.get("attribution_run_id") or "") == run_id:
+            if (
+                str(row.get("attribution_run_id") or "") == run_id
+                or str(row.get("calendar_iso_week") or "") == calendar_week
+                or str(row.get("iso_week") or "") == calendar_week
+            ):
                 return row
         return self.generate_report(
             tenant_id=tenant_id,

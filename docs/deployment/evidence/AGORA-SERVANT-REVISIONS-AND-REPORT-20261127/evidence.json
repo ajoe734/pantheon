@@ -56,17 +56,20 @@
     "ac3_sd_section_13_residual_3_weekly_attribution_without_persona_cycle": {
       "status": "verified_local",
       "implementation": [
-        "services/persona/meeting_triggers.py::MeetingTriggers.ensure_weekly_attribution_run — requests the weekly attribution run idempotently per (tenant_id, iso_week) via AttributionPort.request_weekly_run even when no persona is enrolled (first is None in _mt3) or via MeetingTriggers.run_without_persona_cycle.",
-        "services/control-plane/bff/agora/servant/turn_worker.py::ServantTurnWorker.run_weekly_post_attribution_reports — invokes MeetingTriggers.ensure_weekly_attribution_run and produces each trader's weekly report via TraderReportService.ensure_weekly_report_after_attribution."
+        "services/persona/meeting_triggers.py::HttpAttributionPort & attribution_port_from_env — real AttributionPort subclass calling POST /api/attribution/runs and GET /api/attribution/records with env-configured URL and service token or runtime HS256 service JWT.",
+        "services/persona/meeting_triggers.py::MeetingTriggers.run_without_persona_cycle & ensure_weekly_attribution_run — requests the weekly attribution run idempotently per (tenant_id, iso_week) via AttributionPort.request_weekly_run even when no persona cycle runs.",
+        "services/agora/store.py::AgoraStore.list_active_trader_scopes & services/agora/service.py::AgoraWriteService.list_active_trader_scopes — discovers bounded active (tenant_id, user_id, strategy_id, servant_persona_id) scopes from servant sessions, habit profiles, decision locks, and trader reports.",
+        "services/control-plane/bff/agora/servant/turn_worker.py::ServantTurnWorker.maybe_run_weekly_tick & run_weekly_post_attribution_reports (wired in ServantTurnWorker.run_once and scripts/run_agora_interaction_worker.py) — bounded hourly weekly tick (idempotent per tenant_id + ISO week) invoking MeetingTriggers.run_without_persona_cycle with HttpAttributionPort and producing each active trader's weekly report via TraderReportService.ensure_weekly_report_after_attribution."
       ]
     },
     "ac4_runtime_budget_cap_cleanup_and_storage_manifest": {
       "status": "verified_local",
       "writer": "agora.trader_reports",
-      "cadence": "1 weekly report per active trader and strategy after weekly attribution + at most 3 on-demand reports per trader per day",
+      "recurring_job": "ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py (DEFAULT_WEEKLY_TICK_INTERVAL_SECONDS = 3600, WEEKLY_TICK_MAX_TRADER_SCOPES = 50, idempotent per tenant_id + ISO week)",
+      "cadence": "Weekly recurring tick (3600s check interval, fires at most once per tenant + ISO week) producing 1 weekly report per active trader and strategy after weekly attribution + at most 3 on-demand reports per trader per day",
       "max_row_bytes": 20480,
       "count_at_hosted_scale": "10 traders x 3 strategies = 30 weekly rows/week (<= 600 KB/week, ~86 KB/day) + <= 30 on-demand rows/day (<= 600 KB/day)",
-      "growth_per_day": "<= 686 KB/day before pruning; steady-state bounded to <= 780 rows (<= 16 MB)",
+      "growth_per_day": "<= 686 KB/day before pruning (0 B on repeat ticks in the same ISO week); steady-state bounded to <= 780 rows (<= 16 MB)",
       "cap": "26 weekly reports per trader and strategy (~6 months, TRADER_REPORT_WEEKLY_HISTORY_CAP = 26); 3 on-demand reports per trader per day (TRADER_REPORT_ONDEMAND_DAILY_CAP = 3) with 7-day retention (TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7)",
       "cleanup": "AgoraStore.prune_trader_reports on each write + AgoraStore.purge_expired_trader_reports invoked hourly in ServantTurnWorker.maybe_purge",
       "storage_manifest": "Registered as bounded schema_table:agora.trader_reports in docs/operations/storage-manifest.json (verified by scripts/check_storage_manifest.py)"
@@ -111,12 +114,8 @@
   ],
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_revisions_and_report.py",
-      "result": "8 passed"
-    },
-    {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_triggers.py",
-      "result": "35 passed"
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_revisions_and_report.py services/persona/test_meeting_triggers.py services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py",
+      "result": "52 passed (9 in test_agora_servant_revisions_and_report.py, 35 in test_meeting_triggers.py, 8 in test_agora_interaction_worker_runtime_wiring.py)"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/agora/strategy_workshop/test_versions.py",

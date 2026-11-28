@@ -131,13 +131,105 @@ class AttributionPort:
         return items
 
 
-def attribution_port_from_env(env: Mapping[str, str], tenant: str) -> AttributionPort | None:
-    base = env.get("PANTHEON_ATTRIBUTION_API_URL", "")
-    token = env.get("PANTHEON_ATTRIBUTION_SERVICE_TOKEN", "")
-    if not base or not token:
-        return None
-    from services.persona.persona_cycle_controller import http_transport
-    return AttributionPort(http_transport(base, token, tenant))
+class HttpAttributionPort(AttributionPort):
+    """HTTP AttributionPort to ``/api/attribution/runs`` and ``/api/attribution/records``
+    authenticated with an env service token or a short-lived runtime service JWT.
+    """
+
+    URL_ENVS = (
+        "PANTHEON_ATTRIBUTION_API_URL",
+        "PANTHEON_EVALUATION_API_URL",
+        "PANTHEON_EVALUATION_SERVICE_URL",
+        "EVALUATION_URL",
+    )
+    TOKEN_ENVS = (
+        "PANTHEON_ATTRIBUTION_SERVICE_TOKEN",
+        "PANTHEON_ATTRIBUTION_SERVICE_JWT",
+        "EVALUATION_SERVICE_TOKEN",
+        "PANTHEON_EVALUATION_SERVICE_TOKEN",
+        "EVALUATION_API_TOKEN",
+    )
+    SECRET_ENVS = (
+        "PANTHEON_RUNTIME_JWT_SECRET",
+        "PANTHEON_BFF_JWT_SECRET",
+        "PERSONA_JWT_SECRET",
+    )
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        token: str | None = None,
+        jwt_secret: str | None = None,
+        tenant: str = "default",
+        env: Mapping[str, str] | None = None,
+        timeout: float = 20.0,
+    ) -> None:
+        source_env = os.environ if env is None else env
+        resolved_base = (
+            base_url
+            if base_url is not None
+            else next((source_env.get(k, "").strip() for k in self.URL_ENVS if source_env.get(k, "").strip()), "")
+        )
+        resolved_token = (
+            token
+            if token is not None
+            else next((source_env.get(k, "").strip() for k in self.TOKEN_ENVS if source_env.get(k, "").strip()), "")
+        )
+        resolved_secret = (
+            jwt_secret
+            if jwt_secret is not None
+            else next((source_env.get(k, "").strip() for k in self.SECRET_ENVS if source_env.get(k, "").strip()), "")
+        )
+        self.base_url = resolved_base.rstrip("/")
+        self._token = resolved_token.removeprefix("Bearer ").removeprefix("bearer ").strip()
+        self._jwt_secret = resolved_secret
+        self.tenant = str(tenant or "default").strip() or "default"
+        self.timeout = float(timeout)
+        self._env = source_env
+        super().__init__(self._http_call)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and (self._token or self._jwt_secret))
+
+    def _bearer(self) -> str:
+        if self._token:
+            return self._token
+        if not self._jwt_secret:
+            return ""
+        import time as _time
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        now = int(_time.time())
+        claims: dict[str, Any] = {
+            "sub": "agora-interaction-worker",
+            "roles": ["system", "persona", "attribution_runner"],
+            "tenant_id": self.tenant,
+            "iat": now,
+            "exp": now + 120,
+        }
+        for claim, names in (
+            ("iss", ("PANTHEON_RUNTIME_JWT_ISSUER", "PANTHEON_BFF_JWT_ISSUER", "PERSONA_JWT_ISSUER")),
+            ("aud", ("PANTHEON_RUNTIME_JWT_AUDIENCE", "PANTHEON_BFF_JWT_AUDIENCE", "PERSONA_JWT_AUDIENCE")),
+        ):
+            val = next((self._env.get(n, "").strip() for n in names if self._env.get(n, "").strip()), "")
+            if val:
+                claims[claim] = val
+        return encode_jwt_hs256(claims, secret=self._jwt_secret)
+
+    def _http_call(self, method: str, path: str, body: dict | None = None) -> tuple[int, Any]:
+        if not self.configured:
+            raise RuntimeError("attribution_owner_unconfigured")
+        from services.persona.persona_cycle_controller import http_transport
+
+        transport = http_transport(self.base_url, self._bearer(), self.tenant, timeout=self.timeout)
+        return transport(method, path, body)
+
+
+def attribution_port_from_env(env: Mapping[str, str] | None = None, tenant: str = "default") -> HttpAttributionPort | None:
+    port = HttpAttributionPort(env=os.environ if env is None else env, tenant=tenant)
+    return port if port.configured else None
 
 
 def default_opener(persona: Mapping[str, Any], env: Mapping[str, str] | None = None) -> Callable[..., dict[str, Any]]:
@@ -409,7 +501,7 @@ class MeetingTriggers:
                 "iso_week": week,
                 **({"run_id": cached["run_id"]} if cached.get("run_id") else {}),
             }
-        if self.attribution is None:
+        if self.attribution is None or not getattr(self.attribution, "configured", True):
             return {"status": "not_requested", "iso_week": week, "reason": "attribution_owner_unconfigured"}
         window_end = (day - timedelta(days=day.weekday() + 1)).isoformat()  # last Sunday
         try:
