@@ -294,7 +294,8 @@ def test_persona_list_scope_recorded_shapes_and_never_from_name() -> None:
 def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_paging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Owner facts recorded in the 2026-11-27 hosted audit (run 46078393132).
+    # Replay the 2026-11-27 audited owner identity facts on recorded owner shapes.
+    # Unrelated older owner fields are representative; purpose is never injected.
     # Paper ownership must not override the servant's canonical identity metadata.
     servant = copy.deepcopy(RECORDED_AGORA_SERVANT)
     servant.update(id="agora-servant-799a3ce8c021b91cbb54",
