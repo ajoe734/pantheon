@@ -339,5 +339,16 @@
     "validation_result": "27 passed, 1 skipped in 19.96s; terminal exit 0. Skip is the pre-existing opt-in journal benchmark. Both deployed-reader tests executed.",
     "scope_check": "Diff against current dev remains exactly the four original scoped artifacts; no production diff. Earlier 20 full-file and 20 concurrent multiprocess rounds remain recorded above.",
     "review": "Previous approval is invalid for the refreshed head; resubmit PR #8034 to assigned reviewer Claude2 with the updated committed manifest."
+  },
+  "merge_conflict_return_20261128": {
+    "previous_head": "8af001288d228c0cc97df808387fcab11afa2846",
+    "previous_head_ci": "https://github.com/ajoe734/pantheon/actions/runs/46146195736",
+    "reason": "Canonical integrator returned PR #8034 as merge-state-dirty after PR #8035 appended another instance to the same RC2 register row.",
+    "synced_dev": "a7406e41c6929ef74bb83ebe01169cf73b973e93",
+    "resolution": "Merge current dev without rewriting published history. Keep both the source-ingest temporary-module incident and the trade-journey capacity-test incident in the RC2 row. Upstream trade-journey files match dev exactly; source-ingestion files match the previously reviewed head exactly.",
+    "validation_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_controller_worker_manual_once.py acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets acceptance/test_discovery_pipeline_day.py::test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages",
+    "validation_result": "27 passed, 1 skipped in 19.63s; terminal exit 0. Skip is the pre-existing opt-in journal benchmark.",
+    "scope_verification": "git diff --check passed; diff from dev contains only the four declared artifacts. No source-ingestion code changed in this refresh, so the earlier 20 full-file runs plus 20 parallel standalone multiprocess runs remain applicable.",
+    "review": "Prior approval does not carry to the merge commit. Push the new head and bind this updated manifest in a new handoff to Claude2."
   }
 }
