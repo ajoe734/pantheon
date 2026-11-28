@@ -1752,37 +1752,46 @@ def test_explicit_market_context_preserves_through_paper_running_evaluation(
 
 
 
-def test_shared_fleet_ledger_read_prefers_slim_reader_and_falls_back_to_full() -> None:
+def test_shared_fleet_ledger_read_checks_stamp_and_falls_back_to_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.persona_provisioning import PostgresPersonaProvisioningStore
     from services.control_plane.bff.personas import service as svc
+    from services.control_plane.bff.tests.test_persona_directory_ledger_reuse import (
+        TENANT, _SQLDouble, hosted_rows,
+    )
 
-    class Slim:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
+    db = _SQLDouble(hosted_rows())
+    store = PostgresPersonaProvisioningStore("sql-double", connect=db.connect)
+    monkeypatch.setattr(store, "list_by_tenant_for_fleet", lambda *_: pytest.fail("lossy slim read"))
+    monkeypatch.setattr(store, "list_all_for_fleet", lambda: pytest.fail("lossy slim read"))
+    for tenant in (TENANT, ""):
+        first = svc._persona_provisioning_records_shared(store, tenant)
+        assert first == db.rows
+        db.calls.clear()
+        assert svc._persona_provisioning_records_shared(store, tenant) == first
+        assert len(db.calls) == 2
+        assert db.calls[0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        assert db.calls[1] == "SELECT revision FROM bff.persona_provisioning_revision WHERE singleton"
 
-        def list_by_tenant(self, tenant_id):
-            self.calls.append("full")
-            return ["full"]
-
-        def list_by_tenant_for_fleet(self, tenant_id):
-            self.calls.append("slim")
-            return ["slim"]
-
-        def list_all(self):
-            self.calls.append("full_all")
-            return ["full"]
-
-        def list_all_for_fleet(self):
-            self.calls.append("slim_all")
-            return ["slim"]
+        # An external commit leaves updated_at unchanged but advances the stamp.
+        db.rows[165].references["deployment_dispatch"]["accepted_revision"] = db.revision
+        db.revision += 1
+        db.calls.clear()
+        changed = svc._persona_provisioning_records_shared(store, tenant)
+        assert changed == db.rows
+        assert changed != first
+        assert sum(sql.startswith("SELECT revision") for sql in db.calls) == 1
+        assert sum(sql.startswith("SELECT tenant_id,") for sql in db.calls) == 1
+        db.calls.clear()
+        assert svc._persona_provisioning_records_shared(store, tenant) == changed
+        assert len(db.calls) == 2
+        assert db.calls[1].startswith("SELECT revision")
 
     class Full:
         def list_by_tenant(self, tenant_id):
             return ["full"]
 
-    slim = Slim()
-    assert svc._persona_provisioning_records_shared(slim, "t") == ["slim"]
-    assert svc._persona_provisioning_records_shared(slim, "") == ["slim"]
-    assert slim.calls == ["slim", "slim_all"]
     assert svc._persona_provisioning_records_shared(Full(), "t") == ["full"]
 
 

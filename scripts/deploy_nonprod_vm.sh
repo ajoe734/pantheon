@@ -7945,15 +7945,44 @@ recreate_steady_service_on_baseline_image() {
   local service="$1" image_id="$2" ref
   [[ -n "${image_id}" ]] || { echo "no baseline image recorded"; return 1; }
   docker image inspect "${image_id}" >/dev/null 2>&1 || { echo "baseline image ${image_id} is not retained"; return 1; }
-  ref="$(docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
-    | SERVICE="${service}" python3 -c '
-import json, os, sys
-try:
-    print((json.load(sys.stdin).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or "")
-except Exception:
-    print("")
-')" || ref=""
-  [[ -n "${ref}" ]] || { echo "compose image reference for ${service} is unavailable"; return 1; }
+  # Keep config stderr in memory; redact before truncation so a clipped secret
+  # cannot escape redaction. Never print resolved config (it contains secrets).
+  ref="$(SERVICE="${service}" python3 - <<'COMPOSE_REF_PY'
+import json
+import os
+import re
+import subprocess
+import sys
+
+result = subprocess.run(
+    ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml",
+     "--profile", "*", "config", "--format", "json"],
+    capture_output=True, text=True, errors="replace")
+ref = ""
+if result.returncode == 0:
+    try:
+        ref = (json.loads(result.stdout).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or ""
+    except (ValueError, AttributeError, TypeError):
+        pass
+if isinstance(ref, str) and ref:
+    print(ref)
+    sys.exit(0)
+stderr = result.stderr
+secret_name = r"(?:[\w-]*(?:token|secret|password|passwd|api[_-]?key|credential|authorization|private[_-]?key)[\w-]*)"
+for name, value in os.environ.items():
+    if value and re.fullmatch(secret_name, name, re.I):
+        stderr = stderr.replace(value, "[REDACTED]")
+stderr = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", stderr)
+stderr = re.sub(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?", "[REDACTED_JWT]", stderr)
+stderr = re.sub(r"(://)[^\s/@]+@", r"\1[REDACTED]@", stderr)
+stderr = re.sub(r"(?i)(\b" + secret_name + r"\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+                r"\1[REDACTED]", stderr)
+excerpt = " ".join(stderr.split())[:300]
+print(f"compose image reference for {os.environ['SERVICE']} is unavailable "
+      f"(compose config exit status={result.returncode}; stderr={excerpt})")
+sys.exit(1)
+COMPOSE_REF_PY
+)" || { printf '%s\n' "${ref}"; return 1; }
   docker tag "${image_id}" "${ref}" >/dev/null 2>&1 || { echo "could not re-point ${ref} at the baseline image"; return 1; }
   docker compose -p pantheon -f docker-compose.yml --profile '*' \
     up -d --no-deps --force-recreate --no-build "${service}" >/dev/null 2>&1 \
@@ -8347,6 +8376,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     fi
     validate_source_refresh_profile
     validate_required_loop_workers
+    # Capture before any pre-rollout recreation (including bootstrap postgres
+    # and the issuer). Compensation must use the images running before deploy,
+    # never the candidate image installed by issuer startup below.
+    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
+      || rollback_dev_bff_on_failure "steady_service_baseline"
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
@@ -8374,9 +8409,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
-    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
-    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
-      || rollback_dev_bff_on_failure "steady_service_baseline"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.

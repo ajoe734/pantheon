@@ -479,7 +479,8 @@ def _read_ledger(
             sources_recorded = "sources" in cols
             row = connection.execute(
                 f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap,"
-                f" {'sources' if sources_recorded else 'NULL'} AS sources FROM calls WHERE day = ?",
+                f" {'sources' if sources_recorded else 'NULL'} AS sources,"
+                f" {'unsent' if 'unsent' in cols else 'NULL'} AS unsent FROM calls WHERE day = ?",
                 (day,),
             ).fetchone()
             for card in newest:
@@ -607,6 +608,7 @@ def _read_ledger(
         "scope": "service",  # one daily budget shared by every tenant of this deployment
         "utc_day": day,
         "calls": calls,
+        "unsent_calls": (int(row["unsent"]) if row is not None else 0) if "unsent" in cols else None,
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
         **_distinct_sources(calls, row["sources"] if row is not None else 0, sources_recorded),

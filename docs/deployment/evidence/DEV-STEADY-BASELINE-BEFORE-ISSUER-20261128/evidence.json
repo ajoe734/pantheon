@@ -1,0 +1,89 @@
+{
+  "task_id": "DEV-STEADY-BASELINE-BEFORE-ISSUER-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "review_status": "pending independent review of the committed PR head",
+  "delivery_scope": "functional source evidence only; hosted acceptance is a separate operator task",
+  "root_cause_class": "RC1 WP1.3: revision equality only for images the release builds; restore brings every steady service back",
+  "composes_with": "DEV-DEPLOY-STACK-CHECK-REVISION-SCOPE-20261117, PR #7545",
+  "incident": {
+    "root_run_id": "46095941360",
+    "candidate_backend_revision_prefix": "5f634668b",
+    "frontend_revision_prefix": "0a0ce5405",
+    "previous_issuer_revision_prefix": "2c72f5e28",
+    "previous_issuer_image_prefix": "sha256:03797094bdc4",
+    "restored_container_id_prefix": "27129bc604b6",
+    "source": "Supervisor-provided task brief; worker did not access the VM, SSH, operator keys or hosted services",
+    "failure": "The issuer was started on the candidate before baseline capture. Sealed restore returned it to its correct previous image, but compensation compared it to the candidate baseline and reported image-mismatch."
+  },
+  "changes": [
+    "Move the existing root steady baseline capture immediately after profile validation, before management preparation, pruning, build, PostgreSQL bootstrap, issuer startup and persistent rollout.",
+    "Retain the existing expected-service derivation, running-container row shape, empty-image behavior and compensation policy.",
+    "Resolve Compose image references with separately captured stdout/stderr in memory. An unresolved reference reports the compose config exit status, including zero for a successful render lacking an image, plus a redacted single-line stderr excerpt capped at 300 characters.",
+    "Redact sensitive environment values, credential assignments, Bearer tokens, JWT-like values and URL userinfo before truncating stderr; never print resolved Compose JSON."
+  ],
+  "acceptance_evidence": [
+    {
+      "criteria": [1, 2, 3],
+      "tests": ["test_nov28_root_sequence_restores_pre_deploy_issuer[True]", "test_nov28_root_sequence_restores_pre_deploy_issuer[False]"],
+      "proof": "Execute the actual root pre-rollout source segment with the real baseline/expected-set/issuer-start helpers and isolated Docker state. The issuer begins on the supplied previous-image prefix; real issuer startup puts it on a synthetic candidate image. The baseline still names the previous image. If sealed restore returns the issuer to that previous image, verification succeeds without any retag. If it remains on the candidate, compensation retags only the previous image and recreates it. Both cases return zero without steady_service_compensation_incomplete.",
+      "fixture_limits": "Use the actual service name, six-field Docker inspect layout and observed image/container prefixes from the brief verbatim. Full observed digests/IDs and the candidate digest were not provided: no missing observed bytes are invented; the candidate digest is explicitly synthetic. Infrastructure helpers and Docker are isolated test doubles, not hosted proof."
+    },
+    {
+      "criteria": [4],
+      "tests": ["test_compose_reference_failure_reports_status_and_bounded_redacted_stderr[0]", "test_compose_reference_failure_reports_status_and_bounded_redacted_stderr[17]"],
+      "proof": "Missing image reference with config exit zero, and config failure with exit 17, both fail compensation by service name. The diagnostic includes the actual config exit status and exactly 300 characters of redacted stderr. All six injected credential forms are absent from the complete output."
+    },
+    {
+      "criteria": [5],
+      "tests": ["test_issuer_without_pre_deploy_container_keeps_empty_image_baseline", "test_missing_expected_service_is_reported_even_if_never_running"],
+      "proof": "An expected issuer absent before deployment retains an empty baseline image. A running candidate issuer therefore passes without retagging; an expected service still missing after restore remains a failure, as before."
+    },
+    {
+      "criteria": [6],
+      "proof": "No new runtime file, persistent writer, job, workflow input, service, emitter or table. Baseline creation is moved, not duplicated; diagnostics use process memory. See runtime_budget and the pre-existing cleanup residual."
+    },
+    {
+      "criteria": [7, 8],
+      "proof": "All 21 pre-existing compensation tests retained with unchanged assertions and pass. Five additional parametrized regression cases bring that module to 26 tests. Shared harness setup now enables errexit, respects the expected-set environment override, models config status/stderr/missing-image failures and handles the actual issuer start/revision check. The config fixture derives expected service names instead of wrongly making one-off containers into expected steady services. No existing assertion was weakened or deleted."
+    }
+  ],
+  "validation": [
+    {
+      "command": "timeout 120 /tmp/dev-steady-baseline-before-issuer-20261128-venv/bin/python -m pytest -q scripts/test_compensation_restores_steady_services.py scripts/test_dev_steady_state_rows.py scripts/test_deploy_nonprod_artifact_restore.py::test_internal_rollback_uses_same_driver_even_same_source_and_keeps_rollout_failed scripts/test_deploy_nonprod_artifact_restore.py::test_normal_bff_recreate_reuses_runtime_environment_without_changing_service_set scripts/test_deploy_nonprod_artifact_restore.py::test_three_candidate_start_sites_use_the_admitted_image_override",
+      "exit_status": 0,
+      "result": "38 passed in 12.30s (26 compensation, 8 steady rows, 4 adjacent artifact-restore cases); all terminal output collected"
+    },
+    {"command": "bash -n scripts/deploy_nonprod_vm.sh", "exit_status": 0},
+    {"command": "git diff --check", "exit_status": 0}
+  ],
+  "validation_iterations": [
+    "System python3 had no pytest. Installed pytest into an isolated task-specific /tmp venv without repository dependency changes.",
+    "First compensation run: 24 passed, 2 new tests failed because the new config fixture incorrectly assigned steady restart policies to one-off services. Corrected the fixture's expected service list; existing assertions unchanged.",
+    "Adjacent tests: 3 passed, 1 failed because a new explanatory comment mentioned the full issuer function name ahead of the seal and a pre-existing source-order assertion matched the comment. Reworded the comment; did not change the assertion. Final combined run passed all 38."
+  ],
+  "runtime_budget": {
+    "cadence": "Once per root deployment, at the earlier baseline capture point; no new recurring cadence",
+    "count_at_hosted_scale": "One existing temporary baseline file per root deploy; zero additional runtime files",
+    "size_at_hosted_scale": "One service|image line per expected or observed running steady service; linear only in service count, not business history. Source docker-compose.yml has 57 explicit unless-stopped/always restart entries across all profiles; selected profiles determine the actual set, plus any observed running steady services. An image digest occupies 71 characters; each row adds service-name length plus two delimiters/newline characters. Actual hosted row count was not read under the no-VM rule.",
+    "growth_per_day": "Incremental growth from this change is zero. Existing /tmp retention is one baseline file times deploys/day times baseline size; existing capture failures may leave an empty/partial file, as before.",
+    "cap": "Unchanged per invocation: one baseline file; no new retained diagnostics. The existing script has no explicit cross-deploy baseline file count/age cap.",
+    "cleanup": "No new cleanup mechanism. The existing baseline file has no explicit unlink in deploy_nonprod_vm.sh; host temporary-file cleanup was not verified. This pre-existing retention gap is recorded below for coordinator disposition.",
+    "storage_manifest_registration": "No new writer introduced; no storage manifest entry added"
+  },
+  "residual_findings": [
+    {
+      "finding": "Root 46095941360 source-ingest-scheduler was unhealthy at 02:52:23Z, triggering the original failed rollout.",
+      "disposition": "Explicitly excluded by the task brief. Coordinator must retain its separate health-failure instance; this baseline fix does not claim to repair that incident."
+    },
+    {
+      "finding": "The pre-existing temporary steady baseline file has no explicit unlink or cross-deploy retention cap in this script.",
+      "disposition": "No writer or retention behavior added here. Coordinator must attach this existing cleanup gap to the storage/runtime-budget register class before the chain closes; worker does not edit the register."
+    }
+  ],
+  "hosted_verification": {
+    "performed": false,
+    "reason": "Task explicitly forbids VM/SSH access and operator-key reads; hosted verification belongs to the later operator acceptance task.",
+    "required_followup": "On an operator-authorized release, confirm the root baseline records pre-deploy issuer identity and compensation accepts a sealed restore to that identity, with every expected steady service verified. Do not claim deployed or accepted from these local results."
+  }
+}
