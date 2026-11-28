@@ -84,6 +84,10 @@
     "base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
     "anchor_commit": "80910d8465a5347183772c2d818ddb7651041fec",
     "resolution": "The sole content conflict appended two independent test blocks to test_hypothesis_extraction.py. Retain both complete blocks. Automatic production merge retains PR #7998 unsent-call refund and adapter-backoff behavior alongside catalogue stamping; no new production edits.",
-    "residual_findings": "Existing RC3 retention and RC2 first-24-hour hosted acceptance obligations below remain open; no new out-of-scope finding during refresh."
+    "residual_findings": "Existing RC3 retention and RC2 first-24-hour hosted acceptance obligations below remain open; no new out-of-scope finding during refresh.",
+    "additional_base_refresh": {
+      "base": "75ad5ed52cb8e5ce24850d35ea8f464ebaf48b19",
+      "reason": "Dev advanced during regression; first handoff admission correctly refused the older base. PR #8010 changes only the adjacent reweight register row. Preserve that row from dev and the catalogue discovery instance from this task. No source/test tree changes since the 445 + 13 test batch; no test rerun required."
+    }
   }
 }
