@@ -1,0 +1,130 @@
+{
+  "task_id": "TW-REFRESH-STALE-STATE-AND-WEEKEND-OFFICIAL-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "register_class": "RC2",
+  "domain_owner": "market-data / cb4f6795",
+  "delivery_status": "source_pending_independent_review_and_merge; hosted acceptance pending",
+  "scope": {
+    "author_narrowing": "Generated task brief Next explicitly delegates acceptance 2-4 and stale-state tests to already merged PR #8003. Implement acceptance 5, weekend tests in 6, register 8; collect read-only hosted 7 after merge.",
+    "implemented": "Move only the equity pending_official block ahead of weekend/holiday skips. Admission, seven-day lookback, 07:00 Taipei publication cutoff, force behavior, chip profiles and workflow cadence are unchanged.",
+    "changed_files": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_dev_tw_market_refresh.py",
+      "docs/operations/problem-register.md",
+      "docs/deployment/evidence/TW-REFRESH-STALE-STATE-AND-WEEKEND-OFFICIAL-20261128/evidence.json"
+    ]
+  },
+  "acceptance_1_reproduction": {
+    "task_author_host_inventory": {
+      "path": "/tmp/pantheon-bounded-runtime-45985422058",
+      "BR_PHASE": "captured",
+      "BR_ENTER_COUNT": 0,
+      "recorded_image_prefix": "sha256:e9738148",
+      "image_missing_after_later_deploys": true,
+      "recorded_steady_containers_gone": true,
+      "reported_failures_since": "2026-11-27T10:50:00Z"
+    },
+    "direct_read_only_checks": [
+      {
+        "run_id": 46078582392,
+        "job_id": 140772006476,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/46078582392",
+        "command": "gh api repos/ajoe734/pantheon/actions/jobs/140772006476/logs",
+        "log_sha256": "9a4af4b104ad2081ee57aff52661228f13a2e1e4ff068c38930f61a2504f0a61",
+        "observed": "First bounded refresh at 2026-11-27T22:46:36.8948956Z fails bounded_runtime_stale_restore_failed; steady posture at 22:50:15Z fails steady_restore_failed:bounded_runtime."
+      },
+      {
+        "run_id": 46075700478,
+        "job_id": 140762789436,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/46075700478",
+        "command": "gh api repos/ajoe734/pantheon/actions/jobs/140762789436/logs",
+        "log_sha256": "b6f7419558a6383fa8238a97eb66b423958bc798a6750e01b0f48323e9a5f97e",
+        "observed": "Official preflight skips weekend at 22:29:03Z (Taipei 11/28); steady posture at 22:32:16Z fails steady_restore_failed:bounded_runtime."
+      }
+    ],
+    "other_failures_reported_in_task_brief": [
+      46057794648,
+      46070936933
+    ],
+    "temporary_live_repair": {
+      "at": "2026-11-28T03:40:00Z",
+      "actor": "operator-approved repair reported by task author; not performed by this worker",
+      "renamed_to": "/tmp/stale-pantheon-bounded-runtime-45985422058-20261128T0340Z",
+      "limitation": "The renamed record is outside the restore glob. Its absence on a later run cannot prove automatic retirement."
+    }
+  },
+  "acceptance_2_4_inherited_delivery": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/8003",
+    "merge_commit": "2e06e185b8109d8166bf1d8387f43834586714a0",
+    "merged_at": "2026-11-28T01:30:31Z",
+    "upstream_evidence": "docs/deployment/evidence/TW-REFRESH-STALE-BOUNDED-RUNTIME-RECORD-BLOCKS-REFRESH-20261127/evidence.json",
+    "retention": "Task author accepts retirement, rather than moving aside. #8003 deletes the retired state after a named receipt; default log tail is 50 lines in pantheon-bounded-runtime-retired.log, not matched by the restore glob. No second storage writer is added by this task.",
+    "test_file": "scripts/test_deploy_nonprod_vm.py",
+    "reused_tests": [
+      "test_never_entered_record_of_a_dead_run_on_an_older_release_is_retired_and_the_refresh_proceeds",
+      "test_entered_record_superseded_by_a_later_release_is_retired_by_the_steady_check",
+      "test_never_entered_record_with_an_unhealthy_steady_posture_is_restored_as_recorded",
+      "test_entered_record_with_its_bounded_runtime_in_place_restores_as_before",
+      "test_genuine_stale_restore_failure_keeps_the_record_and_names_the_failing_part"
+    ],
+    "hosted_proof": "Pending upstream release-owner refresh after Root run 46102871850; no qualifying run observed at evidence creation. Do not infer hosted retirement from source tests."
+  },
+  "acceptance_5_6_local_verification": {
+    "base_commit": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+    "red": "On unchanged origin/dev script, six new clock-pinned cases: 3 failed, 3 passed. Saturday due-Friday, holiday due-Thursday and Saturday 05:40 due-Thursday expose early skips.",
+    "green_focused": {
+      "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest scripts/test_dev_tw_market_refresh.py -q -k 'pending_official_precedes or saturday_0540'",
+      "result": "6 passed, 132 deselected",
+      "exit_code": 0
+    },
+    "origin_dev_replay": "Same 2026-11-28T07:30+08:00 snapshot and maintained heredoc via _run_preflight_script(script_text=git_blob): origin/dev skipped/weekend; task proceeds/official_rows_missing_collector_only, session 2026-11-27, both configured symbols.",
+    "syntax": {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "exit_code": 0
+    },
+    "full_suites": "Results to be recorded after bounded foreground batches terminate."
+  },
+  "acceptance_7_hosted": {
+    "status": "pending_after_independent_review_and_merge",
+    "run_ids": [],
+    "reason": "Workflow uses dev; this task head has not merged. Current Root deployment run 46102871850 is in_progress at 2026-11-28T03:55Z and does not contain this task.",
+    "read_only_probe_commands": [
+      "gh run list --repo ajoe734/pantheon --workflow dev-tw-market-refresh.yml --branch dev --limit 20 --json databaseId,headSha,createdAt,status,conclusion,event",
+      "gh api repos/ajoe734/pantheon/actions/runs/RUN_ID/jobs",
+      "gh api repos/ajoe734/pantheon/actions/jobs/JOB_ID/logs",
+      "gh run download RUN_ID --repo ajoe734/pantheon --name tw-refresh-outcome --dir /tmp/tw-weekend-acceptance-RUN_ID"
+    ],
+    "assertions": [
+      "Confirm run head contains merged task change; weekend/holiday pending official preflight proceeds with official_rows_missing_collector_only. With official rows already present, skipped weekend/holiday remains expected.",
+      "Inspect outcome artifacts and steady restore: no bounded_runtime_stale_restore_failed / steady_restore_failed:bounded_runtime. Step success alone is insufficient.",
+      "Via existing authorized hosted read transport, GET /api/source-ingest/snapshots/latest?symbol=SYMBOL for each current active paper-bound symbol. Record snapshot_id, event_time, observed_at, lineage and opens with trade dates. Confirm pending session is now official (no collector_close for that date) and has positive official opens; connect result to run id.",
+      "If first run is Monday, record the calendar-selected latest closed session and official opens. Keep weekend behavior as local deterministic proof if no weekend run was dispatched."
+    ],
+    "authority": "Read-only proof; coordinator owns dispatch. No hosted mutation or new refresh dispatch performed by this worker."
+  },
+  "acceptance_8_register": "RC2 existing same-day collector-close row extended with both instances, reference to RC1 owning retirement chain and market-data domain owner cb4f6795.",
+  "runtime_budget": {
+    "new_jobs": 0,
+    "new_writers": 0,
+    "new_schedules": 0,
+    "cadence": "Unchanged workflow: 07:00, 08:00, 10:30, 12:30 UTC weekdays plus existing externally dispatched recovery/manual invocations. No new weekend schedule.",
+    "count_and_size": "Same bounded refresh and snapshot writers, schemas and per-run caps; seven-day pending scan over existing active-symbol lineage. No new row kind or per-row fields. Existing outcome artifact only.",
+    "growth_per_day": "No new file/table/queue/cache; writer overhead 0 bytes/day. Official data previously skipped may now be ingested on an already scheduled/invoked run; actual provider-row bytes/day depend on active symbols and pending sessions and remain to be measured on hosted. No zero-total-growth claim.",
+    "cap_and_cleanup": "Existing 150-minute job, bounded runtime and steady restore cleanup and market-data-store retention stay in force. This change adds no new storage retention path or retirement record. storage-manifest.json is unchanged because writer implementation and storage bounds are unchanged."
+  },
+  "residual_findings": [
+    {
+      "finding": "Acceptance 6 names 05:40 Taipei Friday-only pending as proceeding, but existing official publication cutoff is 07:00.",
+      "disposition": "Implement acceptance 5 and task-author narrowed ordering scope without changing publication policy. Explicit tests show 05:40 Friday-only skips; Thursday pending proceeds; Friday pending proceeds at 07:30. Coordinator to reconcile wording; no new symptom task."
+    },
+    {
+      "finding": "#8003 retirement receipt writer is absent from current storage-manifest.json; its source evidence states only 50-line count cap, without per-receipt byte cap/hosted measurement.",
+      "disposition": "Residual to RC1 retirement/release owner and RC3 storage manifest owner; task author explicitly excluded reimplementation of acceptance 2-4. Recorded in RC2 row cross-reference and handoff for coordinator attachment, not silently considered satisfied."
+    },
+    {
+      "finding": "Hosted source-to-official reconciliation, opens and upstream stale-state proof remain outstanding.",
+      "disposition": "Acceptance 7 of this task and upstream #8003 hosted obligation; independent review/merge first, then coordinator read-only run and snapshot proof. No accepted/done claim."
+    }
+  ]
+}
