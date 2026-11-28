@@ -376,7 +376,7 @@ class ControllerState:
         anchor = parse_utc(self.last_tick_at or self.heartbeat_at)
         if anchor is None:
             return 0
-        now = now or datetime.now(timezone.utc)
+        now = now or parse_utc(utc_now()) or datetime.now(timezone.utc)
         missed = max(0, int((now - anchor).total_seconds() / interval_seconds) - 1)
         self.startup_missed_ticks += missed
         return missed

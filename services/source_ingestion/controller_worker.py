@@ -2529,13 +2529,47 @@ def run_controller_tick(
         _write_alive(config.alive_path)
 
 
-def main() -> int:
-    config = config_from_env()
-    store = ControllerStateStore(config.state_path)
-    loaded_state = store.load()
+def next_tick_sleep_seconds(
+    *,
+    tick: int,
+    startup_missed_ticks: int,
+    interval_seconds: int,
+    continuation_pending: bool = False,
+    last_tick_failed: bool = False,
+) -> int:
+    """Return the sleep duration after ``tick`` before ``tick + 1``.
+
+    When ``startup_missed_ticks > 1``, at most one immediate catch-up tick
+    (``tick == 1``, dispatched at startup with zero initial delay) runs
+    immediately; remaining missed ticks (``tick < startup_missed_ticks``) and
+    any tick after a failure pace at the full normal cadence
+    (``interval_seconds``) rather than back-to-back or at the 1-second
+    continuation pause.
+    """
+    cadence = max(1, int(interval_seconds))
+    if last_tick_failed:
+        return cadence
+    if int(startup_missed_ticks) > 1 and int(tick) < int(startup_missed_ticks):
+        return cadence
+    if continuation_pending:
+        return min(cadence, CONTINUATION_PAUSE_SECONDS)
+    return cadence
+
+
+def run_controller_loop(
+    *,
+    config: ControllerConfig | None = None,
+    store: ControllerStateStore | None = None,
+    writer: LoopControlWriter | None = None,
+    tick_fn: Any = None,
+    sleep_fn: Any = None,
+) -> int:
+    resolved_config = config if config is not None else config_from_env()
+    resolved_store = store if store is not None else ControllerStateStore(resolved_config.state_path)
+    loaded_state = resolved_store.load()
     state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
-    startup_missed = state.record_startup_missed(interval_seconds=config.interval_seconds)
-    store.save(state)
+    startup_missed = state.record_startup_missed(interval_seconds=resolved_config.interval_seconds)
+    resolved_store.save(state)
     print(
         _canonical_json(
             {
@@ -2548,18 +2582,22 @@ def main() -> int:
         ),
         flush=True,
     )
-    writer = build_loop_writer(dsn=config.database_url, state=state)
+    resolved_writer = (
+        writer
+        if writer is not None
+        else build_loop_writer(dsn=resolved_config.database_url, state=state)
+    )
     tick = 0
     last_tick_failed = False
-    sleep_seconds = config.interval_seconds
     while True:
         tick += 1
-        sleep_seconds = config.interval_seconds
+        continuation_pending = False
+        active_tick_fn = tick_fn if tick_fn is not None else run_controller_tick
+        active_sleep_fn = sleep_fn if sleep_fn is not None else time.sleep
         try:
-            result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+            result = active_tick_fn(config=resolved_config, state=state, store=resolved_store, writer=resolved_writer)
             last_tick_failed = False
-            if result.get("continuation_pending") is True:
-                sleep_seconds = min(config.interval_seconds, CONTINUATION_PAUSE_SECONDS)
+            continuation_pending = result.get("continuation_pending") is True
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
             last_tick_failed = True
@@ -2579,9 +2617,20 @@ def main() -> int:
                 ),
                 flush=True,
             )
-        if config.max_ticks and tick >= config.max_ticks:
+        if resolved_config.max_ticks and tick >= resolved_config.max_ticks:
             return 1 if last_tick_failed else 0
-        time.sleep(sleep_seconds)
+        sleep_seconds = next_tick_sleep_seconds(
+            tick=tick,
+            startup_missed_ticks=startup_missed,
+            interval_seconds=resolved_config.interval_seconds,
+            continuation_pending=continuation_pending,
+            last_tick_failed=last_tick_failed,
+        )
+        active_sleep_fn(sleep_seconds)
+
+
+def main() -> int:
+    return run_controller_loop()
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose and smoke tests.
