@@ -36,15 +36,17 @@
     "cap_and_cleanup": "Existing calls/events/cards and CompilerStore writers remain registered in docs/operations/storage-manifest.json. Input answers and inactive record attempts have 30-day pruning; existing events/cards/compiler rows lack a verified hard size cap or cleanup. This task adds none."
   },
   "tests": {
-    "command_regression": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py -q --tb=short",
-    "regression": "325 passed, 3 warnings in 75.67s; terminal exit 0",
+    "command_regression": "timeout 300 .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py -q --tb=short --disable-warnings",
+    "regression": "346 passed, 3 warnings in 81.25s; terminal exit 0 (326 source-ingestion + 20 adapter schema contract tests)",
     "command_adapter_schema": ".venv-pantheon/bin/python3 -m pytest services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py -q --tb=short",
-    "adapter_schema_contract": "20 passed in 1.31s; terminal exit 0",
+    "adapter_schema_contract": "20 adapter schema contract tests included in the current combined regression batch; terminal exit 0",
     "command_probe": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_compiler.py::test_hosted_evidence_probe_reports_real_store_rows_read_only -q --tb=short",
     "probe_fixture": "1 passed in 2.45s; terminal exit 0; executes the embedded probe against real temporary ledger/compiler stores and verifies unchanged database bytes",
     "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 existing entries, no failures",
     "diff": "git diff --check: passed",
-    "environment": "python3 scripts/dev/provision_python_distribution.py --print-python: provisioned task-scoped .venv-pantheon; system python has no pytest"
+    "environment": "python3 scripts/dev/provision_python_distribution.py --print-python: provisioned task-scoped .venv-pantheon; system python has no pytest",
+    "command_research_integration": "timeout 300 .venv-pantheon/bin/python3 -m pytest services/research/tests/test_hypothesis_card_gate_candidate.py services/research/tests/test_card_admission_production_integration.py -q --tb=short --disable-warnings",
+    "research_integration": "13 passed, 127 warnings in 190.08s; terminal exit 0; covers all seven CI failures and neighbouring card-to-admission integration cases"
   },
   "hosted_acceptance": {
     "status": "pending",
@@ -64,5 +66,16 @@
       "class": "RC2 / discovery acceptance",
       "finding": "First 24-hour hosted numbers and next Root hypothesis_cards verdict cannot exist before this source is independently reviewed, merged and deployed. Coordinator must retain hosted acceptance obligation; zero drafts requires reporting refusal detail rather than claiming stage success."
     }
-  ]
+  ],
+  "ci_return": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46105018288/job/140858821004",
+    "previous_result": "7 failed, 1334 passed, 38 skipped; terminal exit 1",
+    "cause": "Research integration imports the shared prediction replay helper directly. The previous patch qualified monthly_revenue_yoy only in a compiler-local wrapper, leaving seven Research cases correctly refused as unparsable_signal_input.",
+    "repair": "Move the governed tw_monthly_revenue.yoy replay input into the shared extraction helper; remove the compiler-local duplicate. The hand-authored source fixture is preserved. Production validation is unchanged. The extraction replay asserts top-level testable and the governed input; the existing explicit monthly_revenue_yoy case still asserts needs_data:unparsable_signal_input.",
+    "pre_fix_reproduction": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/research/tests/test_hypothesis_card_gate_candidate.py::test_stored_text_to_registered_candidate_end_to_end -q --tb=short",
+      "result": "1 failed, 15 warnings in 15.70s; terminal exit 1; same missing registry payload as CI"
+    },
+    "base_refresh": "Merged origin/dev dd5c6f51b526d686ca9ab6b3c6c3af09af157714 without conflicts; earlier review does not apply to the refreshed head."
+  }
 }
