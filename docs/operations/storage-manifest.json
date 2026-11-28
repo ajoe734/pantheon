@@ -4955,6 +4955,30 @@
    "task": "AGORA-TRADER-HABIT-PROFILE-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "TRADER_REPORT_WEEKLY_HISTORY_CAP = 26",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "each row is at most 20 KB (TRADER_REPORT_MAX_BYTES = 20480 enforced in AgoraStore.put_trader_report); recurring weekly job ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py runs at most once per 3600s (DEFAULT_WEEKLY_TICK_INTERVAL_SECONDS = 3600), scans at most 50 active trader/strategy scopes (WEEKLY_TICK_MAX_TRADER_SCOPES = 50), requests POST /api/attribution/runs via HttpAttributionPort idempotently once per (tenant_id, iso_week), and writes at most 1 weekly report per (tenant_id, user_id, strategy_id, iso_week) capped at 26 weekly reports per trader and strategy (~6 months, TRADER_REPORT_WEEKLY_HISTORY_CAP = 26); on-demand reports are capped at 3 per trader per day (TRADER_REPORT_ONDEMAND_DAILY_CAP = 3) with 7-day retention (TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7), leaving at most 780 rows (<= 16 MB) at hosted scale (10 traders x 3 strategies)",
+   "cleanup": "AgoraStore.prune_trader_reports on each write deletes weekly reports beyond the newest 26 per trader and strategy and deletes expired on-demand reports; AgoraStore.purge_expired_trader_reports (invoked hourly via ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py) purges on-demand reports older than 7 days",
+   "growth_driver": "recurring weekly tick ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py (3600s check interval, idempotent per tenant_id + ISO week, calling MeetingTriggers.run_without_persona_cycle -> ensure_weekly_attribution_run via HttpAttributionPort and writing 1 weekly report per active trader and strategy after weekly attribution) + at most 3 on-demand reports per trader per day via POST /bff/agora/servant/reports or command bar 整理本週報表 (SD 9.3)",
+   "growth_per_day": "at hosted scale (10 traders x 3 strategies): recurring weekly job writes 30 weekly rows/week (<= 600 KB/week, ~86 KB/day; 0 B on repeat ticks in the same ISO week) plus <= 30 on-demand rows/day (<= 600 KB/day) = <= 686 KB/day before pruning; steady-state bounded to <= 780 rows (<= 16 MB)",
+   "kind": "schema_table",
+   "name": "agora.trader_reports",
+   "owner": "schema:agora",
+   "readers": [
+    "scripts/run_agora_interaction_worker.py",
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/control-plane/bff/agora/servant/reports.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py",
+    "services/persona/meeting_triggers.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-SERVANT-REVISIONS-AND-REPORT-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",

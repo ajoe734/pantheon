@@ -94,7 +94,7 @@ def test_needs_data_counted_per_dataset_sorted():
 
 
 def test_model_declared_refusals_and_proposer_failure():
-    assert _compiler({"outcome": "not_expressible", "reason": "needs text"}).compile(_card()).reason == "needs text"
+    assert "reason=needs text" in _compiler({"outcome": "not_expressible", "reason": "needs text"}).compile(_card()).reason
     out = _compiler({"outcome": "needs_data", "dataset": "tw_tdcc"}).compile(_card())
     assert out.status == NEEDS_DATA and out.dataset == "tw_tdcc"
     bad = HypothesisCompiler(lambda *_: (_ for _ in ()).throw(RuntimeError("x")), CompilerStore())
@@ -385,7 +385,7 @@ def test_prediction_demand_counted_even_after_rule_cached_and_not_testable():
 
 
 def test_worker_prediction_demand_and_support_remain_independent(tmp_path):
-    transport = _RecordedTransport()
+    transport = _RecordedTransport(_prediction_recording())
     queue = DistillationJobQueue(tmp_path / "q.jsonl")
     seeds = StrategySpecSeedStore(tmp_path / "s.jsonl")
     ledger = ExtractionLedger(tmp_path / "l.sqlite")
@@ -558,3 +558,89 @@ def test_proposer_call_metered_in_ledger_with_own_outcome_and_usage(tmp_path):
     assert cached.extra.get("cached") is True
     assert ledger.calls_today() == 2
     assert len(ledger.events("src-1")) == 1
+
+
+def test_unknown_top_level_inputs_never_call_proposer_or_reserve_budget(tmp_path):
+    from services.source_ingestion.tests.test_hypothesis_extraction import HOSTED_CATALOGUE_INPUTS
+
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    calls = []
+    compiler = HypothesisCompiler(lambda *args: calls.append(args), CompilerStore(), ledger)
+    for sid, inputs, missing in HOSTED_CATALOGUE_INPUTS:
+        card = {**_card(sid), "signal_inputs": inputs}
+        outcome = compiler.compile(card)
+        assert outcome.status == NEEDS_DATA and outcome.dataset == missing
+    assert calls == [] and ledger.calls_today() == 0 and compiler.store.drafts() == []
+
+
+def test_refusal_context_survives_invalid_dataset_and_storage_caps(tmp_path):
+    proposal = {"outcome": "needs_data", "dataset": "bad name/" + "d" * 100,
+                "reason": "model explanation\n" + "r" * 400}
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    compiler = HypothesisCompiler(lambda *_: proposal, CompilerStore(), ledger)
+    card = _card()
+    outcome = compiler.compile(card)
+    assert outcome.status == NOT_EXPRESSIBLE
+    assert outcome.reason.startswith("needs_data_invalid_dataset_name")
+    assert "dataset=" + ("bad_name_" + "d" * 100)[:80] in outcome.reason
+    assert "reason=" + ("model explanation " + "r" * 400)[:300] in outcome.reason
+    from services.source_ingestion.hypothesis_compiler import card_key
+    assert compiler.store.get_outcome(card_key(card))["reason"] == outcome.reason
+    assert ledger.events()[0]["detail"] == outcome.reason
+    assert len(outcome.reason) <= 500
+
+
+def test_every_proposal_rejection_keeps_model_context():
+    from services.source_ingestion.hypothesis_compiler import validate_proposal
+
+    proposals = [
+        {"outcome": "not_expressible"}, {"outcome": "needs_data"},
+        {"outcome": "unknown"}, {"outcome": "factor_rule"},
+        {**_proposal(), "extra": "rejected"}, _proposal(field="unknown"),
+        _proposal(dataset="unknown"), _proposal(op="unknown"),
+    ]
+    for proposal in proposals:
+        proposal.update(dataset="model_dataset", reason="model reason")
+        kind, reason, _, artifact = validate_proposal(proposal, card=_card())
+        assert kind in (NEEDS_DATA, NOT_EXPRESSIBLE) and artifact is None
+        assert "dataset=model_dataset; reason=model reason" in reason
+
+
+def test_hosted_evidence_probe_reports_real_store_rows_read_only(tmp_path, monkeypatch, capsys):
+    import hashlib
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    evidence = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/L2-HYPOTHESIS-CARD-CATALOGUE-GROUNDED-20261128/evidence.json"
+    script = json.loads(evidence.read_text())["hosted_acceptance"]["read_only_python"]
+    ledger_path, compiler_path = tmp_path / "l.sqlite", tmp_path / "c.sqlite"
+    ledger = ExtractionLedger(ledger_path)
+    card = {**_card(), "signal_inputs": ["tw_price_daily.close"]}
+    event_id = ledger.record("src-1", "card", "testable")
+    ledger.put_input_answer("src-1", "digest", outcome="card", detail="testable", event_id=event_id, card=card)
+
+    def proposer(*_):
+        proposer.last_usage = {"input_tokens": 100, "output_tokens": 20}
+        return {"outcome": "needs_data", "dataset": "bad name", "reason": "unavailable model input"}
+
+    compiler = HypothesisCompiler(proposer, CompilerStore(compiler_path), ledger)
+    compiler.compile(card)
+    ledger.record("src-1", "rejected", "citation_unverifiable: span 0 is not an exact substring; normalized_match=true; exact_text=Ａ B")
+    now = datetime.now(timezone.utc)
+    for key, value in {"SWITCH_AT":(now-timedelta(minutes=1)).isoformat(),
+                       "END_AT":(now+timedelta(minutes=1)).isoformat(),
+                       "L2_LEDGER":str(ledger_path), "COMPILER_DB":str(compiler_path)}.items():
+        monkeypatch.setenv(key, value)
+    before = [hashlib.sha256(p.read_bytes()).hexdigest() for p in (ledger_path, compiler_path)]
+    scope = {}
+    exec(compile(script, str(evidence), "exec"), scope)
+    result = json.loads(capsys.readouterr().out)
+    assert result["testability"] == {"testable": 1}
+    assert result["testable_input_exceptions"] == []
+    assert result["proposer_calls"] == 1 and result["proposer_non_testable"] == []
+    assert result["proposer_unverifiable"] == []
+    assert result["normalized_match_share"] == 1
+    assert "dataset=bad_name; reason=unavailable model input" in result["compile_outcomes"][0]["reason"]
+    assert before == [hashlib.sha256(p.read_bytes()).hexdigest() for p in (ledger_path, compiler_path)]
+    scope["ledger"].close()
+    scope["compiler"].close()

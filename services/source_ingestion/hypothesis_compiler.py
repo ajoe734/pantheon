@@ -210,6 +210,18 @@ def card_key(card: Mapping[str, Any]) -> str:
 
 
 def validate_proposal(proposal: Any, *, card: Mapping[str, Any] | None = None) -> tuple[str, str, str, Optional[dict[str, Any]]]:
+    """Validate and retain bounded model refusal context on every rejection path."""
+    kind, reason, dataset, artifact = _validate_proposal(proposal, card=card)
+    if kind in (NOT_EXPRESSIBLE, NEEDS_DATA) and isinstance(proposal, Mapping):
+        model_dataset = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(proposal.get("dataset") or ""))[:80]
+        model_reason = "".join(c if c.isprintable() else " " for c in str(proposal.get("reason") or ""))[:300]
+        # Both existing stores cap details at 500 characters. Keep all context
+        # within that cap, including a bounded machine validation reason.
+        reason = f"{reason[:90]}; dataset={model_dataset}; reason={model_reason}"
+    return kind, reason, dataset, artifact
+
+
+def _validate_proposal(proposal: Any, *, card: Mapping[str, Any] | None = None) -> tuple[str, str, str, Optional[dict[str, Any]]]:
     """Return (kind, reason, dataset, artifact). kind in compiled|not_expressible|needs_data."""
     if not isinstance(proposal, Mapping):
         return NOT_EXPRESSIBLE, "proposal_not_object", "", None
@@ -411,9 +423,11 @@ class HypothesisCompiler:
             RECORD_TOTAL_LIMIT,
             idea_missing_datasets,
             prediction_missing_dataset,
+            stamped_card_testability,
         )
 
-        testability = str(card.get("testability") or "")
+        testability = stamped_card_testability(card)
+        card = {**card, "testability": testability}
         key = card_key(card)
         spans = card.get("cited_spans") or []
         span_sid = str(spans[0].get("source_record_id") or "") if spans and isinstance(spans[0], Mapping) else ""
@@ -495,7 +509,7 @@ class HypothesisCompiler:
             self._store.count_needs_data(dataset, key)
             self._store.record_outcome(key, NEEDS_DATA, reason, dataset)
             if self._ledger is not None:
-                self._ledger.record(sid, NEEDS_DATA, f"{dataset}:{reason}" if reason else dataset, usage=usage)
+                self._ledger.record(sid, NEEDS_DATA, reason, usage=usage)
             return CompileOutcome(NEEDS_DATA, reason, dataset=dataset)
         if kind == NOT_EXPRESSIBLE or artifact is None:
             self._store.record_outcome(key, NOT_EXPRESSIBLE, reason)
