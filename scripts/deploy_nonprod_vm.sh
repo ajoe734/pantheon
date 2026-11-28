@@ -3120,10 +3120,6 @@ if missing:
     emit("proceed", reason="closed_session_missing", session_date=str(session_date), symbols=missing)
 if admission_failure:
     emit("error", reason="existing_snapshot_admission_failed", detail=admission_failure)
-if now_t.weekday() >= 5:
-    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
-if d_str in holidays:
-    emit("skipped", reason="holiday", checked_at=now_u.isoformat())
 # TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117: a session covered only by provisional collector
 # closes still lacks its official OpenAPI rows. Once the official next-morning publication time has
 # passed, proceed so the existing bounded official refresh ingests them and the snapshot store
@@ -3154,6 +3150,12 @@ if pending_official:
         symbols=sorted({sym for syms in pending_official.values() for sym in syms}),
         checked_at=now_u.isoformat(),
     )
+# Reconcile earlier sessions on nontrading days too, once their official publication is due.
+# With no pending official rows, preserve the normal weekend/holiday skip.
+if now_t.weekday() >= 5:
+    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
+if d_str in holidays:
+    emit("skipped", reason="holiday", checked_at=now_u.isoformat())
 if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
