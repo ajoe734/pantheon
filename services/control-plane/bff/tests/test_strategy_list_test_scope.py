@@ -54,6 +54,8 @@ def test_default_list_hides_test_scoped_strategies_and_counts_them(
     assert not ids & set(hidden_ids)
     assert body["page_info"]["total"] == TOTAL_COUNT - 2
     assert body["meta"]["hidden_test_persona_strategy_count"] == 2
+    assert body["meta"]["hidden_persona_strategy_count"] == 2
+    assert body["meta"]["persona_exclusion_scope"] == ["test"]
     assert body["meta"]["include_test_personas"] is False
 
 
@@ -71,6 +73,8 @@ def test_include_test_personas_returns_them(monkeypatch: pytest.MonkeyPatch) -> 
     assert set(hidden_ids) <= ids
     assert body["page_info"]["total"] == TOTAL_COUNT
     assert body["meta"]["hidden_test_persona_strategy_count"] == 0
+    assert body["meta"]["hidden_persona_strategy_count"] == 0
+    assert body["meta"]["persona_exclusion_scope"] == []
 
 
 def test_no_test_personas_means_nothing_hidden(monkeypatch: pytest.MonkeyPatch) -> None:

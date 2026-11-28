@@ -53,7 +53,8 @@ def test_strategy_default_cohort_uses_canonical_metadata_and_one_directory_read(
     expected = 6 if "hide_retired_personas=true" in query else TOTAL_COUNT - 1
     assert body["page_info"]["total"] == expected
     assert body["meta"]["hidden_persona_strategy_count"] == 1
-    assert body["meta"]["hidden_test_persona_strategy_count"] is None
+    assert body["meta"]["hidden_test_persona_strategy_count"] == 1
+    assert body["meta"]["persona_exclusion_scope"] == ["test", "non_trading"]
     assert len(world.owner_summary_calls) <= 2
     assert all(pid in call[0] for call in world.owner_summary_calls)
 
@@ -101,6 +102,9 @@ def test_strategy_paging_has_no_gaps_and_failed_directory_does_not_hide(monkeypa
     body = client.get("/bff/strategies?hide_retired_personas=true&page_size=200", headers=HEADERS).json()
     assert body["page_info"]["total"] == TOTAL_COUNT
     assert body["meta"]["surfaces"]["persona_states"]["status"] == "unavailable"
+    assert body["meta"]["hidden_test_persona_strategy_count"] == 0
+    assert body["meta"]["hidden_persona_strategy_count"] == 0
+    assert body["meta"]["persona_exclusion_scope"] == ["test"]
 
 
 def test_older_registry_without_owner_hide_uses_the_same_non_trading_cohort(monkeypatch):
@@ -199,3 +203,25 @@ def test_explicit_management_attribution_servant_drilldown_is_empty():
     )
     assert body["page_info"]["total"] == 0
     assert body["data"]["items"] == []
+
+
+@pytest.mark.parametrize("include_test", [False, True])
+def test_combined_hidden_count_is_compatible_without_extra_reads(monkeypatch, include_test):
+    world = _World()
+    for sid, metadata in zip(world.running_strategy_ids[:2], [
+        {"persona_class": "agora_servant"}, {"data_scope": "test"},
+    ]):
+        entry = next(e for e in world.entries if e.strategy_id == sid)
+        world.persona_records[entry.metadata["persona_ids"][0]]["metadata"] = metadata
+    app, _ = _build_app(monkeypatch, world)
+    body = TestClient(app).get(
+        "/bff/strategies?exclude_state=draft&page_size=200&include_test_personas="
+        + str(include_test).lower(), headers=HEADERS,
+    ).json()
+    meta = body["meta"]
+    assert meta["hidden_test_persona_strategy_count"] == meta["hidden_persona_strategy_count"] == (0 if include_test else 2)
+    assert meta["persona_exclusion_scope"] == ([] if include_test else ["test", "non_trading"])
+    assert meta["include_test_personas"] is include_test
+    assert body["page_info"]["total"] == TOTAL_COUNT - (0 if include_test else 2)
+    assert world.directory_reads == ["tenant-dev"]
+    assert len(world.owner_summary_calls) <= 2

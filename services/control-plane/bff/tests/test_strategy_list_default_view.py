@@ -938,6 +938,8 @@ def test_default_view_rows_totals_and_hidden_counts_unchanged_and_legacy_owner_f
     assert body["meta"]["total"] == legacy["meta"]["total"] == 3
     for key in (
         "hidden_test_persona_strategy_count",
+        "hidden_persona_strategy_count",
+        "persona_exclusion_scope",
         "hidden_unbound_stub_strategy_count",
         "hidden_retired_persona_count",
         "operational_counts",
@@ -983,6 +985,8 @@ def test_default_view_walks_many_owner_pages_with_hide_input_and_first_page_coun
     assert meta["hidden_unbound_stub_strategy_count"] == seeds
     for key in (
         "hidden_test_persona_strategy_count",
+        "hidden_persona_strategy_count",
+        "persona_exclusion_scope",
         "hidden_unbound_stub_strategy_count",
         "hidden_retired_persona_count",
         "operational_counts",
