@@ -2,7 +2,9 @@
 
 Optional real-DB checks: PANTHEON_TEST_PROVISIONING_DSN=<local DSN> pytest <file>.
 The integration fixtures seed and drop only a unique local schema.
-Timing/RSS acceptance is pending the task brief correction recorded in evidence.
+Reproducible timing/RSS facts (no thresholds): run this module with
+--benchmark --mode before|after --surface strategy_lookup|persona_list,
+supplying the same local DSN. Each invocation is an isolated BFF router process.
 """
 from __future__ import annotations
 
@@ -42,6 +44,8 @@ def hosted_rows():
     rows = []
     for i in range(170):
         pid = f"persona-{i:020d}"
+        if i == 164:
+            pid = "persona-c6ef44745087d11cc138"
         if i == 169:
             pid = "agora-servant-799a3ce8c021b91cbb54"
         name = f"Trader {i}" if i != 169 else f"{pid} trader paper book"
@@ -53,18 +57,21 @@ def hosted_rows():
             }
             for key in RECEIPT_KEYS
         }
-        refs.update({
-            "runtime_id": f"runtime-{i}", "runtime_binding_id": f"rb-{i}",
-            "requested_risk_profile_provenance": {
-                "source": "verified_persona_owner", "persona_id": pid,
-                "tenant_id": TENANT, "requested_profile": "medium",
-            },
-            "capital_pool_risk_policy_resolution": {"resolved": False, "status": "unresolved_profile_mapping"},
-            "risk_policy_owner_decision_request": {
-                "absence_source": "profile_mapping_missing", "reason_code": "review_required",
-                "recommended_governance_action": "review_mapping",
-            },
-        })
+        refs.update({"runtime_id": f"runtime-{i}", "runtime_binding_id": f"rb-{i}"})
+        # Hosted rows currently have none of these keys. Enrich one row to
+        # prove field parity for future risk context as required by AC4.
+        if i == 165:
+            refs.update({
+                "requested_risk_profile_provenance": {
+                    "source": "verified_persona_owner", "persona_id": pid,
+                    "tenant_id": TENANT, "requested_profile": "medium",
+                },
+                "capital_pool_risk_policy_resolution": {"resolved": False, "status": "unresolved_profile_mapping"},
+                "risk_policy_owner_decision_request": {
+                    "absence_source": "profile_mapping_missing", "reason_code": "review_required",
+                    "recommended_governance_action": "review_mapping",
+                },
+            })
         rows.append(ProvisioningRecord(
             tenant_id=TENANT, idempotency_key=f"create-{i}", request_hash=f"hash-{i}",
             normalized_name=name.lower(), persona_id=pid,
@@ -371,11 +378,18 @@ def test_postgres_rollback_inflight_commit_and_point_reads(pg_ledger, monkeypatc
     assert len(store.list_by_tenant(TENANT)) == len(store.list_all()) == 170
 
 
-def test_fleet_uses_full_inputs_and_documents_old_projection_differences(ledger, monkeypatch):
+def test_fleet_uses_full_inputs_and_documents_old_projection_differences(ledger, monkeypatch, tmp_path):
     store, db = ledger
+    _wire(monkeypatch, store, db.rows, tmp_path)
     monkeypatch.setattr(store, "list_by_tenant_for_fleet", lambda *_: pytest.fail("lossy slim read used"))
     assert ps._persona_provisioning_records_shared(store, TENANT) == store.list_by_tenant(TENANT)
+    directory = ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW)
+    fleet = ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW, reuse_request_read=True)
+    assert fleet == directory
     record = db.rows[165]
+    metadata = fleet.records_by_id[record.persona_id]["metadata"]
+    assert metadata["risk_profile"]["risk_level"] == "medium"
+    assert metadata["risk_policy_owner_decision_request"] == record.references["risk_policy_owner_decision_request"]
     slim = deepcopy(record)
     slim.references = {k: ({} if k == "authoritative_readback" else v) for k, v in record.references.items() if k in store._FLEET_REFERENCE_KEYS}
     slim.result = {k: v for k, v in record.result.items() if k in store._FLEET_RESULT_KEYS}
@@ -392,3 +406,78 @@ def test_fleet_uses_full_inputs_and_documents_old_projection_differences(ledger,
     # Create/readback response also consumes the keys that slim SQL discarded.
     assert "deployment_dispatch" in record.references and "deployment_dispatch" not in slim.references
     assert sorted(record.references) != sorted(slim.references)
+
+
+def _benchmark():
+    """Local, opt-in acceptance facts; never a deterministic CI timing gate."""
+    import argparse
+    import gc
+    import platform
+    import resource
+    import statistics
+    import tempfile
+    import time
+    from pathlib import Path
+    from services.control_plane.bff.strategies.routes.common import read_persona_state_lookup
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--benchmark", action="store_true", required=True)
+    parser.add_argument("--mode", choices=("before", "after"), required=True)
+    parser.add_argument("--surface", choices=("strategy_lookup", "persona_list"), required=True)
+    parser.add_argument("--samples", type=int, default=5)
+    args = parser.parse_args()
+    if not 1 <= args.samples <= 20:
+        parser.error("samples must be between 1 and 20")
+
+    def rss_kib():
+        return int(next(line.split()[1] for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("VmRSS:")))
+
+    with _postgres() as (store, rows), pytest.MonkeyPatch.context() as patch, tempfile.TemporaryDirectory(prefix="ledger-benchmark-") as scratch:
+        clients = _wire(patch, store, rows, Path(scratch))
+        if args.mode == "before":
+            patch.setattr(store, "list_for_directory", lambda tenant=None: store.list_by_tenant(tenant) if tenant else store.list_all())
+
+        def call():
+            if args.surface == "strategy_lookup":
+                result = read_persona_state_lookup(
+                    directory_snapshot=ps._get_persona_directory_snapshot,
+                    projected_state=ps._persona_record_projected_state,
+                    operational_states={"paper_running", "live_running"},
+                    tenant_id=TENANT, snapshot_at=NOW,
+                )
+                assert result.available and len(result.states_by_id) == 170
+            else:
+                response = clients[0].get("/bff/personas?page_size=200", headers=strategy_tests.HEADERS)
+                assert response.status_code == 200, response.text
+
+        gc.collect()
+        rss_idle = rss_kib()
+        started = time.perf_counter()
+        call()
+        cold_ms = (time.perf_counter() - started) * 1000
+        rss_cold = rss_kib()
+        warm_ms = []
+        for _ in range(args.samples):
+            started = time.perf_counter()
+            call()
+            warm_ms.append((time.perf_counter() - started) * 1000)
+        gc.collect()
+        import psycopg
+        with psycopg.connect(store.dsn) as conn:
+            shape = conn.execute(
+                f'SELECT count(*), sum(pg_column_size("references")), sum(octet_length("references"::text)) FROM {store.table}'
+            ).fetchone()
+        print(json.dumps({
+            "mode": args.mode, "surface": args.surface, "cold_ms": round(cold_ms, 3),
+            "warm_ms": [round(ms, 3) for ms in warm_ms], "warm_median_ms": round(statistics.median(warm_ms), 3),
+            "rss_kib": {"idle": rss_idle, "after_cold": rss_cold, "after_warm_gc": rss_kib(), "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+            "cache_retained_bytes": store._directory_cache_bytes, "cache_entries": len(store._directory_cache),
+            "postgres_shape": {"rows": shape[0], "references_column_bytes": shape[1], "references_text_bytes": shape[2]},
+            "python": platform.python_version(),
+        }, sort_keys=True))
+        for client in clients[:2]:
+            client.close()
+
+
+if __name__ == "__main__":
+    _benchmark()

@@ -2,26 +2,18 @@
   "task_id": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
   "owner": "Codex",
   "reviewer": "Antigravity",
-  "state": "partial_anchor_pending_brief_correction",
+  "state": "functional_validation_in_progress",
   "delivery": {
     "merged": false,
     "deployed": false,
     "accepted": false
-  },
-  "blocking_factual_mismatch": {
-    "source": ".orchestrator/worker-runtime/task-context/bff-persona-ledger-read-reuse-20261127.md",
-    "rule": "if an item here is wrong or a needed file is missing from the artifact contract then block with the exact reason instead of working around it",
-    "incorrect_claim": "AC4 attributes sorted(references) and deployment_dispatch consumption to _persona_record_for_provisioning.",
-    "observed": "_persona_create_response emits meta.authoritative_receipt_steps=sorted(record.references) and meta.dispatch_admitted=(deployment_dispatch in record.references). _persona_record_for_provisioning and its metadata helper do not emit those fields. The risk-profile provenance and risk-policy omissions in AC4 are real.",
-    "required_actor": "Human/Ops / task author",
-    "required_action": "Correct or explicitly confirm the AC4 attribution and intended fleet field-parity acceptance, then reopen the existing task; do not create a replacement task."
   },
   "implementation": {
     "scope": "Only Postgres provisioning store and Persona directory ledger-read seam; no coordinator, provisioning owner writes, agent-provision functions or route contract changed.",
     "mechanism": "Singleton transactional bigint revision updated by an AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE statement trigger catches every committed statement, even unchanged updated_at and direct SQL from another connection. Every cache call reads that one revision; cold rows and stamp share REPEATABLE READ READ ONLY snapshot. A concurrent commit is visible on the next call, rollback changes neither visible stamp nor rows. Query errors propagate; no TTL/stale-on-error answer. Fresh get/get_by_persona/list_by_tenant/list_all remain uncached.",
     "cache": "Store-local full row inputs, detached deep copies, LRU 8 keys / 32 MiB per key / 64 MiB retained recursive object budget; no cross-service helper was suitable because Registry cache relies on its own stored summary_rev/index/delta model.",
     "fleet": "_persona_provisioning_records_shared now uses full-input stamp validation rather than lossy slim SQL; request sharing is kept. Legacy slim methods remain callable, but this reader no longer selects them.",
-    "pending": "Local strategy lookup / Persona-list cold and warm timings, RSS, broad focused regression suite, independent exact-head review, merge and operator hosted acceptance."
+    "pending": "Local timing/RSS collection and broader regression running; independent exact-head review, merge and operator hosted acceptance remain."
   },
   "fleet_projection_audit": {
     "actual_differing_metadata_fields": [
@@ -38,7 +30,9 @@
       "risk_policy_owner_decision_request"
     ],
     "downstream_differences": "risk level feeds Persona risk_level when no owner scalar is present; metadata risk_profile.risk_level changes; metadata waiting/governance fields feed existing DTO projections. With richer owner input there may be dependent model-routing/sync-generation changes inside openclaw_agent_reconcile, which passes the resulting risk context to build_persona_runtime_profile. No such nested difference occurred in this local fixture.",
-    "receipt_fields": "authoritative_receipt_steps and dispatch_admitted differ in _persona_create_response when full and slim rows are passed; they are not fields of the fleet Persona record projection. Full-input reuse retains all their source keys."
+    "receipt_fields": "authoritative_receipt_steps and dispatch_admitted differ in _persona_create_response when full and slim rows are passed; they are not fields of the fleet Persona record projection. Full-input reuse retains all their source keys.",
+    "parity_test": "test_fleet_uses_full_inputs_and_documents_old_projection_differences compares complete directory snapshots with reuse_request_read false/true, including a row carrying all three omitted risk keys.",
+    "downstream_change": "openclaw_agent_reconcile receives the full-row risk context from now on. No projected field changes on the hosted rows described by the task author; the richer local row proves fleet/directory parity for all three keys."
   },
   "validation": [
     {
@@ -63,7 +57,7 @@
       "result": "5 passed, 3 skipped, 3 warnings in 4.32s; Postgres cases explicitly skipped without DSN after local container cleanup"
     }
   ],
-  "test_changes": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit.",
+  "test_changes": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit. Following the corrected brief, enrich only one of 170 rows with all three risk keys (hosted currently has none), name the absent-owner row explicitly and compare full fleet and directory snapshots.",
   "runtime_budget": {
     "cache": "See registered revision-table storage-manifest entry and its directory_cache budget. Raw hosted sizes are dispatch facts; local retained bytes and RSS have not yet been recorded.",
     "jobs_added": 0,
@@ -74,11 +68,19 @@
   "residual_findings": [
     {
       "finding": "Conflicting owner scope for agora-servant-799a3ce8c021b91cbb54 remains skipped, preserving Agora Servant owner identity.",
-      "disposition": "Existing paper trader book chain owns it; out of this ledger read scope, from dispatch facts and reproduced fixture."
+      "disposition": "Paper trader book chain, coordinator 70b5f70f, follow-up after #7983 deploys. Skip unchanged, no repair here (task-author disposition 2026-11-28)."
     },
     {
       "finding": "One retired provisioning row has no Persona owner (dispatch persona-c6ef44745087d11cc138).",
-      "disposition": "Coordinator to attach to owner-record consistency class; no repair attempted. The test includes an absent retired owner and preserves current projection behavior."
+      "disposition": "Attached to this task RC3 row as retired-ledger retention with no owner rule, per task author 2026-11-28. No repair; preserve current projection; named fixture row has no owner."
     }
-  ]
+  ],
+  "brief_correction": {
+    "source": "Canonical task next, Human/Ops correction 2026-11-28 (conversation 52a1dacf)",
+    "resolved": true,
+    "scope": "AC4 audits _persona_record_for_provisioning plus _persona_provisioning_metadata and _persona_create_required_data_sources; authoritative_receipt_steps and dispatch_admitted are create-response-only and excluded.",
+    "accepted_choice": "Move fleet ledger reads onto full-input stamp-validated reuse.",
+    "hosted_read_only_fact_from_task_author": "2026-11-28 01:40Z: 170 rows (165 retired, 4 succeeded, 1 provisioning), none with requested_risk_profile_provenance, capital_pool_risk_policy_resolution or risk_policy_owner_decision_request.",
+    "downstream_change": "openclaw_agent_reconcile receives the full-row risk context from now on. No projected field changes on the hosted rows described by the task author; the richer local row proves fleet/directory parity for all three keys."
+  }
 }
