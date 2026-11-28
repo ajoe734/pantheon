@@ -71,6 +71,16 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book",
+      "owner": "paper_execution+telemetry+agora-decision-lock"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book/intents/{intent_id}",
+      "owner": "paper_execution+telemetry+agora-decision-lock"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/workshops/{workshop_id}/completeness",
       "owner": "agora"
     },

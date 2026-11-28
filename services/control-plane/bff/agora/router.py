@@ -406,6 +406,7 @@ def create_agora_router(
         imitation_candidate_reader=getattr(
             resolved_decision_lock_owner, "imitation_candidate_resolver", None
         ),
+        get_read_store=get_read_store,
     ))
     router.include_router(create_performance_router(
         **_kw,

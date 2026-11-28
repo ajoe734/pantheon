@@ -795,6 +795,28 @@ class AgoraWriteService:
         self._mark_habit_profiles_stale(created)
         return created
 
+    def record_decision_lock_paper_proxy_fill(
+        self,
+        human_decision_id: str,
+        *,
+        tenant_id: str,
+        fill: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str] = ("system",),
+        user_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        assert_authorized("AgoraDecisionLock", "record_paper_proxy_fill", actor_roles)
+        updated = self.store.record_decision_lock_paper_proxy_fill(
+            human_decision_id,
+            tenant_id=tenant_id,
+            fill=fill,
+            user_id=user_id,
+            decision_event_id=decision_event_id,
+        )
+        if updated is not None:
+            self._mark_habit_profiles_stale(updated)
+        return updated
+
     # -------------------------------------------------------------------------
     # Trader habit profile facts (AGORA-TRADER-HABIT-PROFILE-20261127, SD §6)
     # -------------------------------------------------------------------------
