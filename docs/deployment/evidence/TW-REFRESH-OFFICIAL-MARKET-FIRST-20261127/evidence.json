@@ -1,0 +1,357 @@
+{
+  "task_id": "TW-REFRESH-OFFICIAL-MARKET-FIRST-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "problem_class": "RC2",
+  "domain_owner": "market data and source storage / cb4f6795",
+  "delivery_state": "source_ready_for_review; not merged, deployed or accepted",
+  "baseline": "Initial regression baseline 396a4ae589592ce7fe92592a3e60e3d2d2cfe255; source rebased before review onto origin/dev 98e496b99f5505fce0f65ede38b7f49a1be94cd3",
+  "implementation_anchor": "32b4758ff (rebased from initial anchor d76d8b8a0)",
+  "acceptance_1_reproduction": {
+    "run_id": 45917069646,
+    "job_id": 140238760916,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/45917069646",
+    "dispatched_at_utc": "2026-11-27T00:30:07Z (task brief)",
+    "commands": [
+      "gh api repos/ajoe734/pantheon/actions/runs/45917069646/jobs --jq '.jobs[] | {id,name,conclusion,steps}'",
+      "gh run download 45917069646 --repo ajoe734/pantheon --name tw-refresh-outcome --dir /tmp/tw-official-first-45917069646"
+    ],
+    "job_step_times_from_github_api": [
+      {
+        "name": "Plan the one bounded runtime of this run",
+        "start": "2026-11-27T00:30:45Z",
+        "end": "2026-11-27T00:30:45Z"
+      },
+      {
+        "name": "Execute bounded TAIFEX contract refresh",
+        "start": "2026-11-27T00:30:45Z",
+        "end": "2026-11-27T00:36:50Z",
+        "duration_seconds": 365
+      },
+      {
+        "name": "Execute bounded FinMind broker branch refresh",
+        "start": "2026-11-27T00:36:50Z",
+        "end": "2026-11-27T00:39:29Z",
+        "duration_seconds": 159
+      },
+      {
+        "name": "Execute bounded Taiwan market refresh",
+        "start": "2026-11-27T00:39:29Z",
+        "end": "2026-11-27T00:39:38Z"
+      },
+      {
+        "name": "Verify and restore steady source-ingest posture",
+        "start": "2026-11-27T00:41:00Z",
+        "end": "2026-11-27T00:41:12Z"
+      }
+    ],
+    "artifact_id": 15163370396,
+    "official_market_outcome": {
+      "call_id": "45917069646-1795739969-12298-2388510140",
+      "connector_id": "tw-twse-tpex-official-market",
+      "dataset": "tw_price_daily",
+      "log": "",
+      "reason": "market_open_0055z: not run so the steady posture is restored before the Taiwan market opens at 00:55Z (now 00:39Z, last profile start 00:35Z)",
+      "status": "not_run",
+      "steady_restore_check": {
+        "reason": "",
+        "status": "healthy"
+      }
+    },
+    "steady_outcome": {
+      "call_id": "45917069646-1795740061-14387-415527441",
+      "mode": "collector_steady_pull",
+      "reason": "",
+      "status": "healthy"
+    },
+    "diagnosis": "The official step reported GitHub success but its artifact says not_run; the final summary correctly failed the run. TAIFEX alone consumed the backup start window. The guard refuses starts at or after 00:35Z; it reserves 900 s profile + 300 s restore before 00:55Z.",
+    "reported_impact_not_remeasured": "Trade-journey coordinator fb22ff9f reported 8 expired decisions for D=2026-11-24 and D=2026-11-25. No decision records were modified or independently counted in this task."
+  },
+  "acceptance_2_workflow_change": {
+    "old_execute_order": [
+      "taifex_refresh",
+      "finmind_refresh",
+      "refresh",
+      "chip_refresh",
+      "finmind_fundamentals_refresh"
+    ],
+    "new_execute_order": [
+      "refresh",
+      "taifex_refresh",
+      "finmind_refresh",
+      "chip_refresh",
+      "finmind_fundamentals_refresh"
+    ],
+    "placement": "Official market is immediately after plan. Re-arm, steady check, artifact upload, lease release and final summary retain their order after all refreshes.",
+    "structural_verification": "Parsed before/after YAML compared equal after moving only the unchanged id=refresh mapping from its old index to plan+1. All other job/workflow keys and step mappings identical. Exit 0.",
+    "unchanged": [
+      "Every step retained",
+      "if conditions",
+      "environment variables and tokens",
+      "run scripts",
+      "one planned bounded runtime and egress union",
+      "timeouts and record caps",
+      "cron schedules and dispatch inputs",
+      "00:35Z last-start guard",
+      "00:55Z restore deadline",
+      "settlement expiry",
+      "collector open=None semantics"
+    ]
+  },
+  "acceptance_3_data_dependency_audit": {
+    "source_references": [
+      "scripts/deploy_nonprod_vm.sh: resolve_bounded_source_refresh_active_symbols, check_taiwan_refresh_preflight, verify_bounded_source_refresh_readback, execute_bounded_source_refresh_entrypoint",
+      "services/source_ingestion/connector_definitions.py: official/TAIFEX/FinMind definitions and TW_CHIP_REFRESH_PROFILES",
+      "services/source_ingestion/connectors/taiwan_official.py: provider payload normalization",
+      "services/source_ingestion/connectors/finmind_taiwan.py: FinMind provider payload normalization",
+      "services/source_ingestion/requirement_state.py: LatestMarketSnapshot.to_public_dict opens"
+    ],
+    "steps": [
+      {
+        "step": "refresh (moved first)",
+        "writes": [
+          "tw_price_daily",
+          "official market snapshot points/opens and calendar evidence",
+          "own receipts/readback"
+        ],
+        "provider_inputs": "TWSE/TPEx provider rows, active or market-input-paused paper binding symbols, governed calendar and existing own snapshot freshness",
+        "reads_other_step_numeric_output": false,
+        "same_run_dependency": "No TAIFEX contracts, broker rankings, chip or FinMind fundamentals are needed to fetch or normalize official prices."
+      },
+      {
+        "step": "taifex_refresh (now after official)",
+        "writes": [
+          "taifex_ssf_contracts",
+          "own receipts/readback"
+        ],
+        "provider_inputs": "TAIFEX published contract rows and paper binding symbols; own connector/dataset readback",
+        "reads_other_step_numeric_output": false,
+        "same_run_dependency": "Does not consume tw_price_daily prices/opens or broker rows. Shared snapshot calendar preflight described below."
+      },
+      {
+        "step": "finmind_refresh (now after official)",
+        "writes": [
+          "tw_broker_top",
+          "own receipts/readback"
+        ],
+        "provider_inputs": "FinMind broker report for the published session and paper binding symbols; own broker source-record coverage/readback",
+        "reads_other_step_numeric_output": false,
+        "same_run_dependency": "Does not consume TAIFEX contracts or tw_price_daily prices/opens. Shared snapshot calendar preflight described below."
+      },
+      {
+        "step": "chip_refresh (position relative to the other non-market steps unchanged)",
+        "writes": [
+          "tw_margin_short_balance",
+          "tw_institutional_flow",
+          "taifex_futures_chip",
+          "taifex_options_chip",
+          "taifex_tx_daily",
+          "own receipts/readback"
+        ],
+        "provider_inputs": "Each official/TAIFEX profile fetches its own provider rows and checks its own published session/schema/readback. Margin session-chain checks read previous margin balances, not prices.",
+        "reads_other_step_numeric_output": false,
+        "same_run_dependency": "Already followed official market before this change; no new data dependency."
+      },
+      {
+        "step": "finmind_fundamentals_refresh (relative order unchanged)",
+        "writes": [
+          "tw_monthly_revenue",
+          "tw_financial_statement",
+          "tw_valuation_bwibbu",
+          "own receipts/readback"
+        ],
+        "provider_inputs": "FinMind provider rows and profile-specific expected periods/readback, not the local official price dataset",
+        "reads_other_step_numeric_output": false,
+        "same_run_dependency": "Already followed official market before this change; no new data dependency."
+      }
+    ],
+    "shared_reads_and_runtime": "All profile preflights read snapshots/latest, using calendar_evidence (or lineage.calendar_evidence) for session/holiday selection. Official market also uses its own snapshot event_time/observed_at freshness. Non-market profiles use their own connector/dataset readback for freshness, not the snapshot price/open. Symbol resolution reads RuntimeBindings and includes both active and market-input-paused paper bindings. No refresh step directly rewrites those bindings. Runtime/egress state is deliberately shared: whichever eligible profile first needs work enters the same planned union; the steady check restores it once.",
+    "input_invariance_and_limit": "The reorder changes no configured symbol selector, provider request, dataset, normalization or calendar policy. There is no numerical producer-consumer dependency requiring the old order. For a fixed binding set and governed calendar the logical provider inputs are unchanged. It would be inaccurate to claim byte-identical reads: moving official market first may refresh calendar evidence before TAIFEX/broker preflight, and wall-clock/guard outcomes necessarily differ. This is an ordering repair, not a snapshot-isolation guarantee."
+  },
+  "acceptance_4_validation": {
+    "interpreter": "/tmp/tw-official-first-venv/bin/python (temporary task-local venv outside repository)",
+    "initial_system_interpreter": "python3 had no pytest; no product dependencies were changed. Isolated verification dependencies installed outside repository.",
+    "red": {
+      "command": "/tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -k official_market_runs_first",
+      "workflow": "byte-identical to origin/dev 396a4ae589592ce7fe92592a3e60e3d2d2cfe255 before relocation",
+      "exit_code": 1,
+      "result": "1 failed, 46 deselected; plan+1=6, refresh=8"
+    },
+    "green": {
+      "command": "/tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q",
+      "exit_code": 0,
+      "result": "47 passed in 95.50s"
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "regression_assertions": [
+      "official market immediately follows plan",
+      "official precedes every other Execute step",
+      "steady check follows all Execute steps"
+    ],
+    "existing_suite_covers": [
+      "one bounded runtime and full egress union",
+      "FinMind token gating",
+      "per-run maximum record budget",
+      "failure visibility",
+      "lease quarantine/re-arm and steady restore"
+    ],
+    "post_rebase": {
+      "base_sha": "98e496b99f5505fce0f65ede38b7f49a1be94cd3",
+      "workflow_and_test_changes_in_base_since_full_suite": false,
+      "yaml_relocation_comparison_exit_code": 0,
+      "focused_command": "/tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -k \"official_market_runs_first or every_profile_of_the_workflow\"",
+      "result": "2 passed, 45 deselected in 46.57s",
+      "exit_code": 0
+    },
+    "recovery_continuation": {
+      "base_sha": "8d534d770572f97f6d7fda280a8a871b9aa814b9",
+      "base_sync": "Merged current origin/dev into the published task branch without rewriting published history; upstream workflow and workflow-test files were unchanged.",
+      "full_suite_command": "timeout 180 /tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q",
+      "full_suite_exit_code": 0,
+      "full_suite_terminal_result": "47 passed in 91.96s (0:01:31)",
+      "structural_comparison": "Parsed current origin/dev workflow, relocated its unchanged refresh mapping immediately after plan, asserted full workflow YAML equality with task workflow: PASS (exit 0).",
+      "red_green": "Called test_official_market_runs_first_and_steady_check_follows_every_refresh with WORKFLOW_PATH pointing first to a temporary copy of current origin/dev YAML (expected AssertionError), then task YAML (PASS); overall exit 0.",
+      "reproduction_recheck": "gh api jobs for run 45917069646 confirmed TAIFEX 00:30:45–00:36:50Z, FinMind broker 00:36:50–00:39:29Z and official market 00:39:29–00:39:38Z.",
+      "delivery": "Existing PR #7972; independent Antigravity review, canonical supervisor merge and acceptance_6_hosted remain outstanding."
+    },
+    "current_base_composition": {
+      "base_sha": "35e13d59a4ca368ce294c8b69aba278108b0324f",
+      "upstream_change": "PR #7911 advances the lease-controller ref, its exact-head verification and lease script checksum; preserved unchanged while merging current dev.",
+      "full_suite_command": "timeout 180 /tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q",
+      "full_suite_exit_code": 0,
+      "full_suite_terminal_result": "47 passed in 63.31s (0:01:03)",
+      "structural_and_red_green": "Full parsed YAML comparison with current origin/dev after only the unchanged market-step relocation: PASS. Current-dev ordering regression: expected failure. Task ordering regression: PASS. Exit 0.",
+      "admission": "Previous handoff rejected without transition because dev advanced during admission. Resubmit with a new exact head containing this base; no approval or merge authority inferred from source recovery."
+    },
+    "ci_source_owned_return": {
+      "failing_run_id": 46025446411,
+      "failing_job_id": 140601449116,
+      "failing_head": "a9a5973c4be13b701f16b1953ca06fbffc71365b",
+      "failing_check": "Run baseline stage-0 gate",
+      "ci_terminal_result": "1 failed, 233 passed, 2 skipped in 214.18s",
+      "diagnosis": "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs still asserted TAIFEX before official market (7 < 6). The task-specific workflow suite did not include this stage-0 assertion.",
+      "repair": "Align four existing ordering assertions across scripts/test_deploy_nonprod_vm.py, scripts/test_dev_tw_market_refresh.py and scripts/test_source_ingest_deploy_diagnostics_contract.py with the official-first task contract. Retain every connector, dataset, egress, secret, failure and deployment-order assertion. No runtime or CI gate changes.",
+      "focused_command": "timeout 60 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
+      "red": {
+        "exit_code": 1,
+        "result": "1 failed in 2.02s; assert 7 < 6"
+      },
+      "green": {
+        "exit_code": 0,
+        "result": "1 passed in 1.83s"
+      },
+      "broader_validation": {
+        "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout --signal=INT 900 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py --durations=5",
+        "exit_code": 124,
+        "terminal_result": "2 failed, 408 passed, 2 skipped in 899.50s; timeout/KeyboardInterrupt, NOT a passed batch",
+        "failures": "The TAIFEX and FinMind ordering tests in test_dev_tw_market_refresh.py were imported at collection before their fixes. Both subsequently pass in the final focused batch. No remaining fastapi import errors in the governed provision.",
+        "unfinished_tests": [
+          "test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime",
+          "test_chip_and_fundamentals_profile_hosts_match_the_plan_table",
+          "test_morning_run_cap_covers_full_market_chip_profile_budget"
+        ],
+        "disposition": "Do not report the full timed-out batch as passed. Final bounded verification explicitly reruns all four repaired assertions, the new ordering regression and these final three tests. Fresh GitHub stage-0 and required checks remain delivery gates for the new head."
+      },
+      "delivery": "Existing PR #7972 will publish this new source head with fresh CI. Requires new exact-head handoff to Antigravity; prior approval is invalid for this head. Only the canonical supervisor integrator may merge. Acceptance 6 remains outstanding on the first qualifying post-merge timer run.",
+      "additional_stale_assertions": {
+        "tests": [
+          "test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+          "test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe"
+        ],
+        "red": {
+          "exit_code": 1,
+          "result": "2 failed in 0.78s; assert 7 < 6 and 8 < 6"
+        },
+        "green": {
+          "exit_code": 0,
+          "result": "2 passed in 0.51s"
+        },
+        "interpreter": ".venv-pantheon/bin/python3, provisioned using scripts/dev/provision_python_distribution.py; checkout bin directory prepended to PATH"
+      },
+      "inherited_venv_attempt": {
+        "command": "timeout 480 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py",
+        "exit_code": 2,
+        "result": "3 failed, 227 passed, 2 skipped in 421.12s; interrupted, not a passed batch",
+        "cause": "Inherited temporary venv lacked fastapi for three source-ingest auth-boundary tests. Replaced by the governed checkout provision without changing product dependencies."
+      },
+      "diagnostics_stale_assertion": {
+        "test": "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse",
+        "red": {
+          "exit_code": 1,
+          "result": "1 failed in 0.59s; assert 7 < 6"
+        },
+        "green_with_all_changed_assertions_and_ordering_regression": {
+          "exit_code": 0,
+          "result": "5 passed in 5.01s"
+        },
+        "search": "Searched scripts/test_*.py references to taifex_refresh, finmind_refresh, twse_idx and refresh_by_id to identify the remaining old refresh-order assertion; the separate nonprod-deploy order remains unchanged."
+      },
+      "final_focused_validation": {
+        "interpreter": ".venv-pantheon/bin/python3; checkout provision via python3 scripts/dev/provision_python_distribution.py, checked from foreign cwd; checkout bin first on PATH for subprocesses",
+        "command_prefix": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout --signal=INT 300 .venv-pantheon/bin/python3 -m pytest -q",
+        "test_nodes": [
+          "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
+          "scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+          "scripts/test_dev_tw_market_refresh.py::test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe",
+          "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_official_market_runs_first_and_steady_check_follows_every_refresh",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_chip_and_fundamentals_profile_hosts_match_the_plan_table",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_morning_run_cap_covers_full_market_chip_profile_budget"
+        ],
+        "exit_code": 0,
+        "terminal_result": "8 passed in 45.83s"
+      },
+      "current_base": "8af0cd5452cc73257c9811193ef2bcc465473579",
+      "composition": "Merged current dev (Agora reconstruction source/evidence and register) without rewriting published history. Upstream refresh workflow, deploy script and all related tests unchanged. Full YAML equality after only unchanged refresh mapping relocation: PASS. Current-dev ordering regression: expected AssertionError; task regression: PASS (exit 0).",
+      "diff_check": {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      "scoped_ci_repairs": [
+        "scripts/test_deploy_nonprod_vm.py",
+        "scripts/test_dev_tw_market_refresh.py",
+        "scripts/test_source_ingest_deploy_diagnostics_contract.py"
+      ],
+      "admission_refresh": "First new-head handoff rejected without transition because dev advanced from 2a87d33e4 to 8af0cd545 during admission. The only upstream change is a problem-register row; merged unchanged. Workflow, deploy script and all tests are byte-identical to the verified source. No old-head approval is reused."
+    }
+  },
+  "acceptance_5_runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_writers": 0,
+    "new_schedules": 0,
+    "additional_runs_per_day": 0,
+    "additional_storage_bytes_per_day": 0,
+    "cadence": "Unchanged: workflow 07:00Z, 08:00Z, 10:30Z, 12:30Z weekdays; task brief reports dev-host recovery timer at 23:30Z/00:30Z dispatching --ref dev. Timer configuration is outside this change.",
+    "count_and_cost": "Same five refresh steps, up to twelve profiles, at most one bounded-runtime entry and one steady restore per run. Same configured invocation count and cost ceilings; actual elapsed time/work can change because official now reaches the guard before the cutoff.",
+    "caps": "Unchanged 150 min job; chip step 90 min, fundamentals 15 min; chip profiles timeout 900 s (+60 s kill grace); default profile guard budget 900 s and restore 300 s; planned max records remains 3000 for full/morning chip runs and 500 for FinMind-only afternoon runs.",
+    "size_growth_retention_cleanup": "No new hosted files, tables, queue, cache, images or containers. Existing normalized rows, receipts, outcome artifact and bounded-runtime temporary state retain their current size/count caps, retention and steady-restore cleanup. Added hosted growth is 0 bytes/day; no storage-manifest entry required for a new writer because none is added."
+  },
+  "acceptance_6_hosted": {
+    "status": "pending_after_independent_review_and_merge",
+    "run_ids": [],
+    "reason": "This source head is not merged to dev. No qualifying post-merge 23:30Z/00:30Z timer run can yet prove delivery. Do not close acceptance from source tests.",
+    "merge_deadline_utc": "2026-11-29T23:00:00Z",
+    "urgent_cycle": "D=2026-11-26 decisions expire 2026-11-30T00:55:00Z; next usable session recovery windows in the task brief are 2026-11-29T23:30Z and 2026-11-30T00:30Z.",
+    "read_only_probe_steps": [
+      "After merge, discover the first timer-dispatched dev run at 23:30Z or 00:30Z with gh run list --repo ajoe734/pantheon --workflow dev-tw-market-refresh.yml --branch dev --limit 20 --json databaseId,headSha,createdAt,status,conclusion,event . Confirm its headSha contains the merged change.",
+      "Read gh api repos/ajoe734/pantheon/actions/runs/RUN_ID/jobs . Assert the official-market Execute step is first among all Execute steps, started_at is before 00:35Z for the 00:30Z backup (or at 23:30Z in the preceding UTC date), and steady_check follows the refreshes. Store run id and exact times.",
+      "Download its tw-refresh-outcome artifact and inspect the official outcome and steady restore result; a GitHub step success alone is insufficient (the reproduced run demonstrates this).",
+      "Using the current authorized hosted dev read transport, GET /api/source-ingest/snapshots/latest?symbol=2330.TW (confirm this symbol is still paper-bound from the owner RuntimeBindings first). Assert opens has a positive official open whose event_time is the preceding trading session per calendar_evidence. For Monday 2026-11-30 the expected session is Friday 2026-11-27 if the governed calendar shows it as a trading day. Record snapshot_id, event_time, observed_at, lineage, matching opens entry and associated run id. No refresh dispatch, data repair or hosted write is part of this probe."
+    ]
+  },
+  "acceptance_7_register": "RC2 market-data instance recorded in docs/operations/problem-register.md under domain owner cb4f6795.",
+  "residual_findings": [
+    {
+      "finding": "Later profiles can still be refused by the unchanged 00:35Z guard. This repair prioritizes the settlement-critical official open; it does not promise a fully successful backup refresh or extend the market-open budget.",
+      "disposition": "Retained timing limitation of the existing bounded-runtime chain (TW-REFRESH-ONE-BOUNDED-RUNTIME-PER-RUN-20261120), market-data owner cb4f6795; measure in post-merge hosted run. No separate symptom task opened."
+    },
+    {
+      "finding": "Hosted acceptance and preceding-session open delivery are not yet proved.",
+      "disposition": "Outstanding acceptance 6 of this same task; preserve run IDs and snapshot proof after merge. No accepted/done claim."
+    }
+  ]
+}

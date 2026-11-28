@@ -742,21 +742,6 @@
    "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "jsonl",
-   "name": "records.jsonl",
-   "owner": "source_ingestion",
-   "readers": [
-    "services/source_ingestion/finmind_broker_backfill.py"
-   ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
-  },
-  {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
-   "kind": "jsonl",
    "name": "replication_admissions.jsonl",
    "owner": "research",
    "readers": [
@@ -3083,6 +3068,44 @@
    "task": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125"
   },
   {
+   "bound_proof": {
+    "contains": "LIMIT -1 OFFSET ?",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per (source, extraction input digest) with a paid terminal answer; at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) new rows per UTC day and rows untouched for 30 days (RECORD_ATTEMPT_RETENTION_DAYS) are deleted on every put_input_answer write; because touch_input_answer keeps reused rows alive past 30 days, the bound is the hard MAX_INPUT_ANSWER_ROWS = 12,000 enforced on every put_input_answer write (least recently used rows evicted first), not the 400 x 30 product",
+   "cleanup": "DELETE FROM input_answers WHERE day < today - 30 days, then evict least recently used rows beyond MAX_INPUT_ANSWER_ROWS (12,000), on each put_input_answer write; touch_input_answer keeps a reused answer alive",
+   "growth_driver": "one row per paid terminal L2 answer (card, no_hypothesis, rejected) keyed by source and extraction input digest so later versions with the same input reuse it without a call",
+   "growth_per_day": "at most 400 rows (detail <= 500 B, card JSON only for cards), observed about 211 answered calls per day; well under 1.5 MB/day",
+   "kind": "table",
+   "name": "input_answers",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127"
+  },
+  {
+   "bound_proof": {
+    "contains": "singleton INTEGER PRIMARY KEY CHECK (singleton = 1)",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 1 row (singleton INTEGER PRIMARY KEY CHECK (singleton = 1)), overwritten in place only when a new deployed GIT_SHA activates (~100 bytes total)",
+   "cleanup": "singleton row is replaced in place on release switch; no history is appended",
+   "growth_driver": "one singleton row per SQLite database (l2_extraction_ledger.sqlite and distill_job_queue.jsonl) recording the active deployment_sha and initial switched_at timestamp",
+   "growth_per_day": "0 rows/day (1 row maximum, ~100 bytes)",
+   "kind": "table",
+   "name": "services/source_ingestion/hypothesis_card.py::{RELEASE_SWITCH_TABLE}",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/discovery_summary.py",
+    "services/source_ingestion/distillation_worker.py",
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -4899,6 +4922,28 @@
    "task": "AGORA-SERVANT-SESSION-DURABLE-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "HABIT_PROFILE_HISTORY_VERSIONS = 12",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per trader and strategy (key habit-<sha256 of tenant, user, strategy>), about 4 KB per profile (HABIT_PROFILE_MAX_BYTES = 8192 hard cap, source refs trimmed first); the row holds the latest profile plus at most 12 superseded versions (HABIT_PROFILE_HISTORY_VERSIONS = 12), so at most about 13 profiles per row; derivation reads at most the trader's own decision locks and the last 200 servant user messages (HABIT_WIDGET_EVENTS_MAX = 200)",
+   "cleanup": "older versions are deleted on write in AgoraStore.put_habit_profile (the 13th superseded version is dropped when a new version is written); a profile whose inputs did not change is not written; the servant's private interpretations live in persona memory (memory.persona_memory_entries) as at most 24 live entries per servant persona (MAX_ACTIVE_INTERPRETATIONS = 24 in servant/habits.py), derived readings expire after 180 days and trader corrections after 365 days (expires_at, archived by the memory owner's archive_expired), superseded entries are kept until their expiry, never edited in place",
+   "growth_driver": "event-driven, no schedule: a decision lock write flags the trader's profile rows stale (AgoraWriteService._mark_habit_profiles_stale); the next read (GET /bff/agora/servant/habits or a servant turn) recomputes deterministically and writes a new version only when the inputs changed; a PATCH correction adds one memory entry (about 1 KB) and one training_example evidence item",
+   "growth_per_day": "at most one profile write per changed read per trader and strategy (about 4 KB); bounded by 13 versions per row, so a trader with 5 strategies holds at most about 5 x 13 x 4 KB = 260 KB",
+   "kind": "schema_table",
+   "name": "agora.habit_profiles",
+   "owner": "schema:agora",
+   "readers": [
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/control-plane/bff/agora/servant/habits.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-TRADER-HABIT-PROFILE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -5911,10 +5956,10 @@
     "file": "services/source_ingestion/daily_bars_store.py"
    },
    "bound_status": "bounded",
-   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days",
-   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none) and read by SOURCE-RETENTION-SWEEPER-20261118-R2; superseded generation file deleted after each manifest swap",
+   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days (tw_broker_top: budget x 750 stored sessions), plus evidence-pinned exceptions",
+   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none), except tw_broker_top retention_sessions=750 (newest stored dates); read by SOURCE-RETENTION-SWEEPER-20261118-R2 with existing pin protection; superseded generation file deleted after each manifest swap",
    "growth_driver": "keyed partition writer (one record per key per date partition, replaced in place; unchanged re-run writes nothing)",
-   "growth_per_day": "measured on hosted-shaped rows (SOURCE-DATASETS-KEYED-WRITE-20261119 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 evidence): institutional 0.114 MB, margin 0.038 MB, broker_top 0.118 MB at 200 symbols x 2 sides x 15 ranks (hosted 3-symbol session doubles from ~35 KB sell-only to ~70 KB compressed with 20 buy + 20 sell rows per symbol after adding side to key (symbol, trade_date, side, rank); <= 0.2 MB/day section 6A budget), broker_branch 0.175 MB, community 0.075 MB, ssf 0.012 MB, index 0.001 MB each",
+   "growth_per_day": "measured on hosted-shaped rows (SOURCE-DATASETS-KEYED-WRITE-20261119 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 evidence): institutional 0.114 MB, margin 0.038 MB, broker_top whole market (SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127): compact rows, 2.15 MB gzip at 2,000 symbols x 20 buy + 20 sell (80,000 rows, 51 MB uncompressed) and 2.62 MB at 2,600 symbols, <= 6 MB/day section 6A budget, key (symbol, trade_date, side, rank), broker_branch 0.175 MB, community 0.075 MB, ssf 0.012 MB, index 0.001 MB each",
    "kind": "jsonl",
    "name": "part-g{generation}.jsonl",
    "owner": "source_ingestion",
@@ -6315,6 +6360,55 @@
    }
   },
   {
+   "name": "FinMind whole-market daily broker top-20 (keyed/tw_broker_top partition + receipts/tw_broker_whole_market/date=*.json)",
+   "owner": "source_ingestion (market-data)",
+   "writer": "services/source_ingestion/finmind_broker_backfill.py run_whole_market_session, run by scripts/deploy_nonprod_vm.sh run_finmind_broker_whole_market inside the source-ingest container from the dev Taiwan refresh (tw-finmind-broker-daily-report step)",
+   "task": "SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127",
+   "register_class": "RC3",
+   "cadence": "one run per published session (after 18:00 Asia/Taipei; afternoon refresh crons 10:30Z and 12:30Z, the second is a 0-request no-op once the session receipt is complete and its partition verifies); 1 FinMind SponsorPro storage_objects request per run against the plan cap of 6,000 requests per hour",
+   "count_at_hosted_scale": "every symbol in the whole-day file (expected about 2,000-2,600 TWSE and TPEx symbols) x 20 buy + 20 sell = about 80,000-104,000 rows per session",
+   "size_per_day": "measured on hosted-shaped rows: 2.15 MB gzip / 51 MB uncompressed at 2,000 symbols (80,000 rows), 2.62 MB gzip at 2,600 symbols (104,000 rows); one receipt of about 1 KB",
+   "growth_per_day": "about 2.2-2.7 MB per session (keyed partition, gzip) + about 1 KB receipt",
+   "growth": "steady state <=4.5 GB over 750 stored sessions after successful delete-mode sweep, plus evidence-pinned older partitions (<=6 MB each); dry-run, unresolved pins and delete-share refusals defer cleanup",
+   "cap": "per-session partition write refused above 6 MB (KEYED_DATASETS tw_broker_top day_budget_bytes, design 6A row); 750 stored session dates retained by the keyed sweeper, so <=4.5 GB after successful delete-mode sweep, plus evidence-pinned older partitions (reported by sweeper); dry-run/unresolved pins/delete-share refusal can defer enforcement; receipts at most 750 files (~0.75 MB); tw_broker_branch_detail is not written by the daily run; the source evidence store receives no per-row record",
+   "cleanup": "keyed partitions outside the newest 750 valid stored session dates through today removed by the existing at-most-daily retention sweeper (services/source_ingestion/retention.py, KEYED_DATASETS retention_sessions); older pinned partitions remain, unresolved pins block deletion, dry_run is default and deletes over 20% require the existing explicit override; a superseded partition generation is deleted after each manifest swap; receipts beyond the newest 750 are deleted by the writer on each run",
+   "readers": [
+    "services/data-plane/taiwan_reference.py",
+    "services/source_ingestion/routers/ingest_operations.py",
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/tw_refresh_outcome_summary.py"
+   ],
+   "bound_proof": {
+    "file": "services/source_ingestion/finmind_broker_backfill.py",
+    "contains": "RECEIPT_RETENTION_SESSIONS = 750"
+   }
+  },
+  {
+   "name": "FinMind two-year broker top-20 backfill (keyed/tw_broker_top partitions + backfill_state.json)",
+   "owner": "source_ingestion (market-data)",
+   "writer": "services/source_ingestion/finmind_broker_backfill.py run_backfill, invoked by scripts/deploy_nonprod_vm.sh run_finmind_broker_backfill inside the source-ingest container from .github/workflows/dev-finmind-broker-backfill.yml under the dev environment lease",
+   "task": "SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127",
+   "register_class": "RC2",
+   "cadence": "operator-dispatched resumable backfill (workflow_dispatch only, no recurring cron); throttled at >=1.5s per request (<=2,400 requests/hour vs FinMind SponsorYear 6,000/hour cap); default bounded window of at most 180 requests and 2,100s wall time per dispatch inside the 45-minute dev environment lease limit; completed dates and daily-refresh-completed dates make 0 requests on resume",
+   "count_at_hosted_scale": "two-year window (~480-500 trading sessions, ~522 weekdays) x ~2,000-2,600 symbols x 40 rows (20 buy + 20 sell) = ~39,200,000-52,000,000 compact rows across stored two-year partitions, plus 1 backfill_state.json file (~60 KB at 522 dates)",
+   "size": "measured on hosted-shaped compact rows: ~2.15 MB gzip (80,000 rows) to ~2.62 MB gzip (104,000 rows) per trading session => ~1.05-1.31 GB gzip across ~490-500 two-year trading sessions; backfill_state.json <= 128 KB",
+   "size_per_day": "0 B/day steady-state once the two-year window is backfilled (daily sessions are written by SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127 into the same keyed/tw_broker_top store)",
+   "growth_per_day": "0 B/day steady-state outside daily refresh; one-time two-year backfill adds ~1.05-1.31 GB gzip (capped at <=3.0 GB for the two-year backfill and <=4.5 GB across 750 retained sessions)",
+   "growth": "one-time backfill of ~480-500 sessions into keyed/tw_broker_top (~1.05-1.31 GB gzip), bounded by BACKFILL_MAX_TOTAL_BYTES = 3,000,000,000 (3.0 GB) and KEYED_DATASETS['tw_broker_top'].retention_sessions = 750 (<=4.5 GB steady-state)",
+   "cap": "per-session cap 6,000,000 bytes compressed (BACKFILL_MAX_SESSION_BYTES / KEYED_DATASETS tw_broker_top day_budget_bytes) and 120,000 rows (BACKFILL_MAX_SESSION_ROWS); two-year backfill total cap 3,000,000,000 bytes (BACKFILL_MAX_TOTAL_BYTES, 3.0 GB) and 60,000,000 rows (BACKFILL_MAX_TOTAL_ROWS); hourly request cap 6,000/h (FINMIND_PLAN_HOURLY_CAP, self-limited to <=2,400/h); run_backfill deletes any over-cap partition and stops immediately with status=cap_exceeded if any cap would be exceeded; no side directory or tw_broker_branch_detail written",
+   "cleanup": "keyed/tw_broker_top partitions outside the newest 750 valid stored session dates through today are pruned by the existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py, retention_sessions=750); superseded partition generations are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately via delete_partition before state commit; backfill_state.json is atomically replaced in place via .tmp rename",
+   "readers": [
+    "services/data-plane/taiwan_reference.py",
+    "services/source_ingestion/routers/ingest_operations.py",
+    "services/source_ingestion/finmind_broker_backfill.py",
+    "scripts/deploy_nonprod_vm.sh"
+   ],
+   "bound_proof": {
+    "file": "services/source_ingestion/finmind_broker_backfill.py",
+    "contains": "BACKFILL_MAX_TOTAL_BYTES = 3_000_000_000"
+   }
+  },
+  {
    "name": "registry.entries stored summary_index / summary_rev columns, partial index entries_strategy_summary_idx, and stamp-validated Phase 1 index cache",
    "owner": "registry-svc schema and in-process Phase 1 cache (services/registry/pg_store.py PostgresRegistryStore._ensure_strategy_summary_index, backfill_strategy_summary_index, and list_strategy_spec_summary_index_rows)",
    "writer": "ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE SEQUENCE/FUNCTION/TRIGGER/INDEX IF NOT EXISTS + idempotent bounded batched backfill (SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED) at store bootstrap; BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn -> pantheon_registry_summary_index_build + nextval('pantheon_registry_summary_rev_seq')) on every registry.entries write; in-process cache populated on read and updated incrementally by summary_rev > max_rev delta query after writes",
@@ -6335,6 +6429,75 @@
    "bound_proof": {
     "file": "services/registry/pg_store.py",
     "contains": "SUMMARY_INDEX_MAX_TENANT_VIEWS = 16"
+   }
+  },
+  {
+   "task": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
+   "owner": "execution.paper-signal-producer",
+   "writers": [
+    "Redis decision_id#journey",
+    "Redis decision_id#lifecycle-sent:pending_settlement",
+    "Redis decision_id#lifecycle-sent:expired_no_price",
+    "existing telemetry_events lifecycle ingest and existing paper lifecycle outbox"
+   ],
+   "cadence": "existing producer tick (60 seconds), no new job; 4-5 hosted bindings, at most one parked decision per binding per session",
+   "growth_per_day": "At most 5 immutable journey records + 10 sent markers + 10 distinct incremental lifecycle events per trading day. Recorded hosted fixtures measured 6359 / 6371 bytes per journey and 3804-3858 bytes per lifecycle event; sent marker <100 bytes. About 32 KB/day Redis journey data + <1 KB/day markers + <39 KB/day incremental telemetry; no market lineage copied into park metadata.",
+   "cap": "at most 15 new Redis keys per trading day, approximately 450 keys / 30 days and about 1 MB; bounded by hosted binding count, not a new fleet-wide admission cap; no marker on failed delivery; repeated sends preserve event identity and ingest deduplicates them",
+   "cleanup": "existing put_decision_record SET NX with 30-day TTL; expiry is never extended by reads/retries; telemetry uses existing lifecycle retention; imported park reuses the runtime lifecycle outbox and existing 35-day chain cleanup, no separate file or queue",
+   "readers": [
+    "services/execution/lean_runtime/paper_signal_producer.py",
+    "services/execution/lean_runtime/paper_runtime.py",
+    "services/trade_journey/lifecycle_projector.py"
+   ],
+   "bound_proof": {
+    "file": "services/execution/lean_runtime/paper_signal_producer.py",
+    "contains": "DECISION_SENT_SUFFIX = \"#lifecycle-sent:\""
+   }
+  },
+  {
+   "name": "registry.entries stored lineage_index / summary_rev columns, partial index entries_lineage_index_idx, and stamp-validated incremental lineage adjacency cache",
+   "owner": "registry-svc schema and in-process lineage adjacency cache (services/registry/pg_store.py PostgresRegistryStore._ensure_lineage_index, backfill_lineage_index, list_lineage_rows; services/registry/storage.py _CompiledLineageGraphIndex, _CompiledLineageRowList, build_lineage_graph)",
+   "writer": "ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE SEQUENCE/FUNCTION/TRIGGER/INDEX IF NOT EXISTS + idempotent bounded batched backfill (LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED) at store bootstrap; reuses the BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn -> pantheon_registry_lineage_index_build + nextval('pantheon_registry_summary_rev_seq')) on every registry.entries write; in-process cache populated on read and updated incrementally in O(degree) time by summary_rev > max_rev delta query after writes",
+   "task": "REGISTRY-LINEAGE-READ-NO-FULL-SCAN-20261127",
+   "register_class": "RC1",
+   "cadence": "DDL and idempotent batched backfill run once at store bootstrap (10 batches x 1,000 rows = 7.56 s total, max single-batch lock 0.854 s on 9,944 hosted-shape rows; subsequent bootstrap check is 1 batch / 0 rows updated in 22.7 ms); shared trigger entries_strategy_summary_index_tg fires once per registry.entries INSERT or UPDATE OF payload (hosted ~300 rows/day); in-process lineage adjacency cache checked on every GET /api/registry/lineage read by one cheap aggregate query (count, max(summary_rev), sum(summary_rev) WHERE lineage_index IS NOT NULL, 4.8 ms measured) and refreshed via 1-row indexed delta read (0.10 ms / 6 buffers) on write",
+   "count_at_hosted_scale": "9,944 registry.entries rows (9,418 strategy_spec, 344 execution_bundle, 182 alpha_template); in-process cache holds 1 canonical by-id map of 9,944 compiled lineage rows plus at most LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 tenant-filtered views and their compiled adjacency indexes per registry-svc worker",
+   "size": "measured on Postgres 16 with 9,944 recorded-shape rows (9,418 strategy_spec, 344 execution_bundle, 182 alpha_template): lineage_index column = 4,081,370 B (3.89 MiB, 410.4 B avg/row, 646 B max/row; 409.9 B avg for strategy_spec, 472.8 B avg for execution_bundle, 320.3 B avg for alpha_template); summary_rev column = 79,552 B (8 B x 9,944 rows, shared with REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127); partial index entries_lineage_index_idx = 417,792 B (408 KiB); in-process lineage cache + 8 concurrent cold reads peak RSS (VmHWM) = 216.19-216.71 MiB (+126.81-127.33 MiB delta over 89.38 MiB idle, down from 460.61-541.42 MiB / +371.24-452.08 MiB before; Python tracemalloc peak delta 51.69 MiB vs 103.76-155.87 MiB before)",
+   "size_per_day": "about 300 new rows/day x (410.4 B lineage_index + ~24 B partial index tuple; summary_rev already shared with summary_index) = about 130 KB/day (~0.13 MB/day); in-place row updates replace lineage_index and summary_rev in the existing row (0 net logical growth after vacuum)",
+   "growth_per_day": "about 130 KB/day (~47 MB/year) in Postgres linear with new registry.entries rows; 0 B/day net in-process cache growth beyond the existing entry set and LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 eviction cap",
+   "growth": "about 130 KB/day (~47 MB/year) in Postgres; initial backfill on 9,944 rows took 7,558.9 ms across 10 batches of 1,000 rows (per-batch lock times 606.2-854.1 ms, max single-batch lock 854.1 ms < 1 s) and left updated_at unchanged",
+   "cap": "1 lineage_index JSONB (~410 B) and 1 shared summary_rev BIGINT (8 B) per object row in registry.entries; backfill bounded per call by LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000 and LINEAGE_INDEX_BACKFILL_MAX_BATCHES = 50; in-process lineage tenant view + adjacency cache bounded to LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 with FIFO eviction",
+   "cleanup": "stored columns and partial index tuples follow registry.entries lifecycle (reclaimed by PostgreSQL VACUUM when rows are updated or deleted; non-object rows are set to NULL by trigger); in-process cache evicts oldest tenant view when len(_lineage_index_tenant_views) > LINEAGE_INDEX_MAX_TENANT_VIEWS (16), updates existing adjacency views incrementally on stamp change or evicts stale views on delete/retire, and supports full eviction via invalidate_lineage_index_cache(full=True)",
+   "readers": [
+    "services/registry/pg_store.py",
+    "services/registry/storage.py"
+   ],
+   "bound_proof": {
+    "file": "services/registry/storage.py",
+    "contains": "LINEAGE_INDEX_MAX_TENANT_VIEWS = 16"
+   }
+  },
+  {
+   "name": "OpenClaw retired stock first-run workspace archive and receipts (<stateDir>/retired-stock-bootstrap/<workspace>/* and <stateDir>/retired-stock-bootstrap/receipts.jsonl)",
+   "owner": "openclaw-gateway configuration (scripts/openclaw-configure-shared-model-pool.sh, L2 extraction / RC2)",
+   "writer": "scripts/openclaw-configure-shared-model-pool.sh (shell-embedded Node writer retiring stock BOOTSTRAP.md across workspace-* and workspaces/* plus stock IDENTITY.md/USER.md/SOUL.md/HEARTBEAT.md/AGENTS.md in workspace-structured-extraction and workspace-memory-index via fs.renameSync to <stateDir>/retired-stock-bootstrap/<workspace>/<file> and fs.appendFileSync to <stateDir>/retired-stock-bootstrap/receipts.jsonl, and writing Pantheon-authored ~660 B AGENTS.md in workspace-structured-extraction and workspace-memory-index; not discovered by check_storage_manifest.py static inventory because shell-embedded Node under scripts/ is outside services/**/*.py)",
+   "task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+   "register_class": "RC2",
+   "cadence": "deploy-time gateway configuration step (scripts/openclaw-configure-shared-model-pool.sh); runs once per gateway deploy/configure and is idempotent on repeat runs (once agents.defaults.skipBootstrap=true is set and existing stock files are moved to retired-stock-bootstrap/, a second run moves 0 files and appends 0 receipt lines; no recurring background job)",
+   "count_at_hosted_scale": "<= ~60 archived stock files of <= 8 KB each and <= ~60 JSONL receipt lines in receipts.jsonl across existing workspaces under the gateway state dir (measured on hosted dev 2026-11-27: 20 workspaces = 18 stock BOOTSTRAP.md + 2 x 5 service-agent stock templates IDENTITY.md/USER.md/SOUL.md/HEARTBEAT.md/AGENTS.md = 28-34 retired files, ~70 KB total)",
+   "size": "<= 8 KB per retired stock file (stock BOOTSTRAP.md is 1,449 B, stock AGENTS.md is 7,870 B; 5 service-agent stock files + BOOTSTRAP.md total 13,267 B per service workspace), <= ~480 KB total archive cap across <= ~60 files; ~220 B per receipt line in receipts.jsonl (<= ~16 KB for 60 lines); 2 Pantheon-authored service-agent AGENTS.md files (~660 B each, ~1.3 KB total replaced in place)",
+   "size_per_day": "0 B/day steady-state (one-time <= ~480 KB archive + <= ~16 KB receipts.jsonl on first run)",
+   "growth_per_day": "0 B/day steady-state after the one-time deploy retirement (agents.defaults.skipBootstrap=true stops future stock seeding and second runs move nothing)",
+   "growth": "one-time archive of <= ~480 KB (measured ~70 KB on hosted dev) + <= ~16 KB receipts.jsonl on first deploy; 0 B/day afterwards",
+   "cap": "at most 1 archived copy per stock first-run template file per existing workspace under the gateway state dir (<= ~60 files x <= 8 KB each, <= ~480 KB total archive bytes) plus 1 receipt line (~220 B JSONL) per retired file in retired-stock-bootstrap/receipts.jsonl (<= ~60 lines, <= ~16 KB total)",
+   "cleanup": "retained permanent audit archive on the existing openclaw-data volume (<stateDir>/retired-stock-bootstrap/<workspace>/<file> and <stateDir>/retired-stock-bootstrap/receipts.jsonl) per operator decision (retire retained, not deleted); skipBootstrap=true prevents OpenClaw from seeding new stock files, and idempotent renameSync leaves 0 source stock files for subsequent runs",
+   "readers": [
+    "scripts/openclaw-configure-shared-model-pool.sh",
+    "scripts/test_openclaw_shared_model_pool_contract.py"
+   ],
+   "bound_proof": {
+    "file": "scripts/openclaw-configure-shared-model-pool.sh",
+    "contains": "retired-stock-bootstrap"
    }
   }
  ]

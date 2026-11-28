@@ -1901,7 +1901,7 @@ class _UnavailableExtractor:
         def summary() -> dict[str, Any]:
             return {}
 
-    def extract(self, source, *, digest=""):
+    def extract(self, source, *, digest="", reuse_answers=True):
         from services.source_ingestion.hypothesis_card import ExtractionOutcome
 
         return ExtractionOutcome("unavailable", detail="timeout: OPENCLAW_RESPONSES_TIMEOUT")
@@ -2092,7 +2092,7 @@ def test_controller_and_discovery_probe_report_only_actionable_dead_letters_and_
         def __init__(self, ldg: ExtractionLedger) -> None:
             self.ledger = ldg
 
-        def extract(self, source, *, digest=""):
+        def extract(self, source, *, digest="", reuse_answers=True):
             assert self.ledger.reserve_attempt(source.source_id, digest) == "reserved"
             extractor_state["order"].append(source.source_id)
             if extractor_state["fail"]:

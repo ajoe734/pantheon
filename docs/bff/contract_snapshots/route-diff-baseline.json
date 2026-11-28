@@ -1228,6 +1228,13 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/servant/habits",
+        "method": "GET",
+        "path": "/bff/agora/servant/habits",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/servant/institutional-knowledge",
         "method": "GET",
         "path": "/bff/agora/servant/institutional-knowledge",
@@ -2622,6 +2629,13 @@
       },
       {
         "family": "agora-core",
+        "key": "PATCH /bff/agora/servant/habits",
+        "method": "PATCH",
+        "path": "/bff/agora/servant/habits",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "PATCH /bff/agora/trading-room/workspaces/{param}/layout",
         "method": "PATCH",
         "path": "/bff/agora/trading-room/workspaces/{param}/layout",
@@ -3315,6 +3329,13 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/workshops/{param}/decisions",
+        "method": "POST",
+        "path": "/bff/agora/workshops/{param}/decisions",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/workshops/{param}/meetings",
         "method": "POST",
         "path": "/bff/agora/workshops/{param}/meetings",
@@ -3918,17 +3939,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 684,
-    "failure_count": 553,
+    "backend_routes": 687,
+    "failure_count": 556,
     "failures": {
-      "backend_missing_frontend": 552,
+      "backend_missing_frontend": 555,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 553,
+    "mode_failure_count": 556,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

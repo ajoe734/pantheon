@@ -430,13 +430,99 @@ def run_reconstruction_job(
         "evidence_refs": result.evidence_refs,
         "allowed_actions": {},
     }, expected_job_id=job_id)
+    snapshot = (
+        _write_completeness_snapshot(
+            store, workshop_id=workshop_id, job_id=job_id, result=result_dict, session=session,
+        )
+        if completed_card is not None else None
+    )
     return {
         "result": result_dict,
+        "completeness_snapshot": snapshot,
         "registry_draft_ref": registry_draft_ref,
         "job_status": "completed" if completed_card is not None else "superseded",
         "job_id": job_id,
         "card": completed_card if completed_card is not None else _current_card(store, workshop_id),
     }
+
+
+def completeness_snapshot_id(job_id: str) -> str:
+    """One deterministic completeness snapshot per reconstruction job."""
+    return f"snap_{job_id}"
+
+
+def _missing_definitions(block: Dict[str, Any]) -> List[str]:
+    details = block.get("details") or {}
+    items: List[str] = []
+    # Hosted drafts name open items ``missing_definitions`` (older ones ``unresolved``).
+    for key in ("missing_definitions", "unresolved"):
+        raw = details.get(key)
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, list):
+            items.extend(str(item) for item in raw if str(item).strip())
+    return items
+
+
+def completeness_snapshot_from_result(
+    result: Dict[str, Any], *, workshop_id: str, job_id: str, strategy_version_id: Optional[str],
+) -> Dict[str, Any]:
+    """Project a completed reconstruction onto the completeness rail row.
+
+    ``state_map_json`` keeps one entry per strategy_map dimension with its
+    ``status`` (read by ``readiness._state_map_from_snapshot``) and its
+    ``missing_definitions``; ``blocking_items_json`` lists the engine
+    blockers then each dimension's missing definitions."""
+    strategy_map = dict(result.get("strategy_map") or {})
+    state_map: Dict[str, Any] = {}
+    blocking: List[Dict[str, Any]] = [
+        {"field": "completeness", "reason": str(blocker), "source": "reconstruction_blocker"}
+        for blocker in (result.get("completeness") or {}).get("blockers") or []
+    ]
+    for dimension, block in strategy_map.items():
+        block = dict(block or {})
+        missing = _missing_definitions(block)
+        state_map[dimension] = {
+            "status": block.get("status") or "missing",
+            "summary": block.get("summary"),
+            "missing_definitions": missing,
+        }
+        blocking.extend(
+            {"field": dimension, "reason": item, "source": "missing_definition"} for item in missing
+        )
+    return {
+        "snapshot_id": completeness_snapshot_id(job_id),
+        "workshop_id": workshop_id,
+        "strategy_version_id": strategy_version_id,
+        "state_map_json": state_map,
+        "blocking_items_json": blocking,
+        "next_question_json": result.get("next_best_question"),
+    }
+
+
+def _write_completeness_snapshot(
+    store: Any, *, workshop_id: str, job_id: str, result: Dict[str, Any],
+    session: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Write the one snapshot of a just-completed job (AC5 completeness rail).
+
+    Called only by the caller whose completed-card compare-and-set won, so a
+    replayed, superseded or failed job writes nothing; the deterministic
+    snapshot id keeps a retried write idempotent. Uses the non-CAS writer so
+    the workshop lock_version (the user's ETag) does not move."""
+    writer = getattr(store, "create_completeness_snapshot", None)
+    if writer is None:
+        return None
+    current = store.get_session(workshop_id) or session
+    strategy_version_id = (
+        current.get("selected_version_id")
+        or current.get("active_strategy_spec_registry_id")
+        or current.get("strategy_id")
+        or workshop_id
+    )
+    return writer(completeness_snapshot_from_result(
+        result, workshop_id=workshop_id, job_id=job_id, strategy_version_id=strategy_version_id,
+    ))
 
 
 def wait_for_reconstruction_job(
@@ -528,4 +614,5 @@ __all__ = [
     "admit_reconstruction_job", "run_reconstruction_job", "wait_for_reconstruction_job",
     "run_reconstruction_worker", "reconstruction_card_id", "reconstruction_wait_seconds",
     "provider_error_from_card", "RECONSTRUCTION_CARD_TYPE",
+    "completeness_snapshot_from_result", "completeness_snapshot_id",
 ]

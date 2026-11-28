@@ -1,0 +1,285 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task": "SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "register_class": [
+    "RC2",
+    "RC3 WP3.1"
+  ],
+  "delivery_state": "PR #7954 remains unmerged; prior exact-head approval revoked. Smoke acceptance aggregate budget raised from 40 to 55 minutes under the Human/Ops artifact-contract extension; no gate or assertion removed. Fresh CI and independent exact-head review pending. Hosted coverage/bytes acceptance remains pending.",
+  "acceptance": {
+    "1_whole_market_from_whole_day_file": {
+      "status": "verified_in_source",
+      "path": "scripts/deploy_nonprod_vm.sh run_finmind_broker_whole_market -> services/source_ingestion/finmind_broker_backfill.py run_whole_market_session (docker exec in the running source-ingest container, its market_data_store)",
+      "behaviour": "one FinMind SponsorPro storage_objects request (TaiwanStockTradingDailyReport whole-day parquet) per published session (latest_published_broker_session, 18:00 Asia/Taipei, governed TWSE calendar); aggregated per (date, symbol, branch) inside pyarrow; top 20 buy (net_qty > 0) and top 20 sell (net_qty < 0) by net quantity for EVERY symbol in the file; no per-symbol request and no RuntimeBinding symbol limit on this path",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_one_request_stores_top20_both_sides_for_every_symbol_compactly",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_ranking_matches_net_quantity_summed_over_price_levels",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_the_keyed_reader_answers_any_symbol_with_both_sides",
+        "scripts/test_deploy_nonprod_vm.py::test_entrypoint_whole_market_complete_skips_per_symbol_path_and_refusal_falls_back",
+        "scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist"
+      ]
+    },
+    "2_compact_rows": {
+      "status": "verified_in_source",
+      "row_shape": "{source_id, connector_id, dataset, metadata:{normalized_row:{symbol, trade_date, side, rank, broker, broker_id, buy_qty, sell_qty, net_qty, price_levels}, available_time, source, source_dataset, source_profile, license_scope, redistribution_allowed, schema_hash, ingest_run_id}} (FinMindTaiwanBrokerDailyReportAdapter.compact_keyed_records); about 640 B uncompressed, 25-27 B gzip per row",
+      "per_symbol_path": "records_from_daily_report_payload no longer embeds raw_rows in metadata or body; keeps price_levels (count)",
+      "branch_detail_decision": "tw_broker_branch_detail is NOT written by the daily run: every branch x symbol pair is roughly 5-10x the top-20 rows per session with no declared reader; the two-year backfill command keeps its own output directory and is not changed by this task",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_per_symbol_records_no_longer_embed_raw_price_level_rows",
+        "services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides"
+      ]
+    },
+    "3_runtime_budget": {
+      "status": "source implemented; validation recorded in retention_repair_20261127; hosted measurement remains pending",
+      "cadence": "one run per published session; afternoon crons 10:30Z and 12:30Z, the second makes 0 requests once the session receipt is complete and its keyed partition verifies",
+      "rows_per_session": "about 80,000-104,000 (2,000-2,600 symbols x 20 buy + 20 sell)",
+      "bytes_per_session": {
+        "measured_2000_symbols": {
+          "rows": 80000,
+          "gzip_bytes": 2145998,
+          "uncompressed_bytes": 51288998,
+          "runtime_seconds_local": 11.4
+        },
+        "measured_2600_symbols_budget_checker": {
+          "rows": 104000,
+          "gzip_bytes": 2623088
+        }
+      },
+      "growth_per_day": "about 2.2-2.7 MB gzip per session plus one ~1 KB receipt",
+      "cap": "6 MB per session partition x 750 stored sessions <=4.5 GB after successful delete-mode sweep, plus evidence-pinned partitions outside the window (<=6 MB each, separately reported). Receipts retain 750 session files (~0.75 MB). Dry-run, unresolved pins or the 20% delete-share refusal do not enforce this steady-state cap.",
+      "retention": "KEYED_DATASETS.tw_broker_top declares retention_sessions=750, retention_days=None. Existing RetentionSweeper._plan_keyed keeps the newest 750 valid stored session dates through today, including any pins inside that window; older pinned sessions are retained in addition. Weekends, holidays and missing collections do not consume stored sessions. Future or invalid date partitions cannot displace history. Receipts independently retain the newest 750 session files.",
+      "source_evidence_store": "receives nothing per broker row; one receipt per session at <market_data_store>/receipts/tw_broker_whole_market/date=<session>.json",
+      "updated": [
+        "services/source_ingestion/daily_bars_store.py KEYED_DATASETS tw_broker_top budget 0.2 MB -> 6 MB",
+        "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md section 6A tw_broker_top row (key with side, whole market, <= 6 MB)",
+        "scripts/check_market_data_budget.py tw_broker_top measured with the real compact record at 2,600 symbols in one write",
+        "docs/operations/storage-manifest.json keyed growth text + runtime_budgets entry",
+        "services/source_ingestion/daily_bars_store.py retention_sessions declaration and budget_report; services/source_ingestion/retention.py session-count cleanup"
+      ],
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_declared_day_budget_holds_a_hosted_shaped_whole_market_session",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_over_budget_session_publishes_nothing",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_receipts_are_pruned_past_the_retention",
+        "scripts/test_check_market_data_budget.py",
+        "services/source_ingestion/tests/test_broker_session_retention.py (752 real session partitions, dry-run/delete, pins, short history, future/invalid dates, calendar/no-expiry datasets, delete-share guard)"
+      ],
+      "retention_acceptance": "P2 source repaired on the same task after Human/Ops added retention.py at 2026-11-27T12:35:22Z and reopened. Existing daily sweeper cadence, dry-run default, unresolved-pin fail-closed and 20% per-store delete guard remain. No new recurring job or persistent writer. Independent review and hosted proof pending."
+    },
+    "4_requests_quota_token_fallback": {
+      "status": "verified_in_source",
+      "requests": "requests_made recorded in the receipt (1 per run, 0 for a complete rerun); plan_hourly_cap 6000 recorded",
+      "token": "passed to the container by name only (docker exec -e FINMIND_API_TOKEN), never printed; provider messages have the token value replaced before they are stored",
+      "refusal": "credential_unavailable / dependency_unavailable / provider_refused (credential_or_plan_rejected, quota_exhausted, provider_error with the provider message) / no_data -> fallback_required=true: the outcome file carries broker_whole_market and coordinator_notice, a COORDINATOR NOTICE log line is written, the existing per-symbol path runs for the active symbols, and the run summary row 'tw_broker_top whole market' fails so the coordinator sees it",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_provider_refusal_requires_fallback_and_records_reason",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_plan_refusal_json_body_keeps_provider_message_without_token",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_credential_makes_no_request",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_rerun_of_a_complete_session_makes_no_request",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_func_passes_token_by_name_and_restricts_egress",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_func_without_receipt_requires_fallback",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_in_container_python_runs_and_reports_missing_credential",
+        "scripts/test_dev_tw_market_refresh_workflow.py::test_summary_whole_market_partial_or_refused_fails_the_run"
+      ]
+    },
+    "5_coverage_gate": {
+      "status": "verified_in_source",
+      "expected_set": "daily_bars rows of the session with volume > 0 and a 4-digit share code (TWSE and TPEx ordinary shares; daily_bars stores only governed-listing symbols); ETFs, warrants and other codes are stored when present but are not in the expected set",
+      "tolerance": "After writing, verify the persisted partition's digest, key fields and row count, then derive symbol/side coverage from those persisted keys. Complete only when <= 2 % of expected symbols are absent, >= 1000 symbols have both buy and sell sides, and no stored symbol lacks either side (zero tolerance for one-sided symbols). Failed readback or no daily_bars day -> partial, never fresh. Before skipping an old complete receipt, repeat this readback against the current expected set. Partial or old false-complete sessions are refetched on the next run.",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_outside_tolerance_is_partial_and_never_fresh",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_within_tolerance_and_minimum_symbols",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_expected_symbols_come_from_daily_bars_traded_shares",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_daily_bars_means_coverage_unverified_partial",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_missing_sell_side_is_partial_even_with_all_1000_symbols_and_retried",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_uses_persisted_sides_and_rejects_legacy_complete_receipt",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_persisted_partition_must_verify_before_freshness",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_complete_receipt_revalidates_current_expected_symbols"
+      ]
+    },
+    "6_licence_and_no_price_daily": {
+      "status": "verified_in_source",
+      "detail": "every stored row and the receipt carry license_scope=vendor_research and redistribution_allowed=false; the run writes only keyed/tw_broker_top and receipts/ (test asserts no tw_price_daily, normalized or tw_broker_branch_detail file)"
+    },
+    "7_hosted_proof": {
+      "status": "pending_deploy",
+      "check": "read-only after deploy: keyed/tw_broker_top/_manifest/date=<latest session>.json row_count / bytes and the receipt receipts/tw_broker_whole_market/date=<session>.json on volume pantheon_source-ingest-data; expect >= 1000 symbols with both sides and bytes <= 6 MB (expected 2.2-2.7 MB)",
+      "probe_python": "import gzip, json, sys\nfrom collections import defaultdict\nfrom pathlib import Path\nfrom services.source_ingestion.daily_bars_store import KEYED_DATASETS, keyed_dataset_store\nfrom services.source_ingestion.finmind_broker_backfill import read_whole_market_receipt, traded_share_symbols\nfrom services.source_ingestion.routers.ingest_operations import _broker_flow_row\nroot, day = Path(sys.argv[1]), sys.argv[2]\nstore = keyed_dataset_store(root, \"tw_broker_top\")\nassert store.declaration.retention_sessions == 750 and store.declaration.retention_days is None, \"session retention not deployed\"\nreceipt = read_whole_market_receipt(root, day)\nassert receipt and receipt[\"status\"] == \"complete\" and receipt[\"fresh\"] is True, \"no complete receipt\"\nverified = store.verify_partition(day)\nassert verified[\"verified\"], verified.get(\"reason\")\ndel verified\nmanifest = store.read_manifest(day)\nsides = defaultdict(set)\nrows = uncompressed = compressed = compact_rows = 0\nfor entry in manifest[\"files\"]:\n    path = store.base / entry[\"path\"]\n    compressed += path.stat().st_size\n    with gzip.open(path, \"rb\") as handle:\n        for line in handle:\n            uncompressed += len(line)\n            if not line.strip():\n                continue\n            rec = json.loads(line)\n            row = _broker_flow_row(rec)\n            assert row and row[\"date\"] == day and 1 <= row[\"rank\"] <= 20, \"unreadable broker row\"\n            meta = rec[\"metadata\"]\n            assert meta[\"license_scope\"] == \"vendor_research\" and meta[\"redistribution_allowed\"] is False\n            compact_rows += isinstance(meta.get(\"normalized_row\"), dict)\n            sides[row[\"symbol\"]].add(row[\"side\"])\n            rows += 1\nassert len(sides) >= 1000 and all(s == {\"buy\", \"sell\"} for s in sides.values()), \"insufficient two-sided coverage\"\nexpected = traded_share_symbols(root, day)\nassert expected, \"missing governed traded-share daily bars\"\nmissing = expected - set(sides)\nassert len(missing) / len(expected) <= 0.02, \"partial coverage\"\nassert compact_rows > 0 and rows == manifest[\"row_count\"]\nassert compressed == manifest[\"bytes\"] == receipt[\"bytes_compressed\"] <= KEYED_DATASETS[\"tw_broker_top\"].day_budget_bytes\nassert 0 <= receipt[\"requests_made\"] <= 1 <= receipt[\"plan_hourly_cap\"]\nassert store.read_manifest(day) == manifest, \"partition changed during probe; retry after refresh\"\nprint(json.dumps({\"trade_date\": day, \"symbols_with_both_sides\": len(sides), \"expected_traded_shares\": len(expected), \"missing\": len(missing), \"rows\": rows, \"compact_rows\": compact_rows, \"bytes_compressed\": compressed, \"bytes_uncompressed\": uncompressed, \"receipt_bytes_uncompressed\": receipt[\"bytes_uncompressed\"], \"requests_made\": receipt[\"requests_made\"], \"keyed_retention_sessions\": KEYED_DATASETS[\"tw_broker_top\"].retention_sessions, \"result\": \"pass\"}, sort_keys=True))\n",
+      "read_only_probe_command": "python3 -c 'import json,subprocess,sys; e=json.load(open(sys.argv[1])); subprocess.run([\"docker\",\"exec\",\"-e\",\"PYTHONDONTWRITEBYTECODE=1\",sys.argv[2],\"python\",\"-c\",e[\"acceptance\"][\"7_hosted_proof\"][\"probe_python\"],sys.argv[3],sys.argv[4]],check=True)' docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json \"$SOURCE_INGEST_CONTAINER\" \"$MARKET_DATA_STORAGE_ROOT\" \"$TRADE_DATE\"",
+      "probe_inputs": "After exact-version deployment and refresh, set SOURCE_INGEST_CONTAINER to the current hosted source-ingest container, MARKET_DATA_STORAGE_ROOT to its mounted market_data_store path, and TRADE_DATE to the published session. Run from the checkout containing this committed evidence manifest. No provider call, task mutation or data write; output must be recorded with deployed identities before claiming acceptance. This checks coverage/bytes and reports the deployed session-retention declaration; source cleanup behaviour is tested separately. Hosted sweep activation and outcome still need deployed evidence.",
+      "local_probe_validation": "Validated with a synthetic 1000-symbol two-sided fixture only; complete passes, missing store and partial receipt fail, no bytes/mtimes changed and no missing root created. Hosted status remains pending_deploy."
+    },
+    "8_problem_register": {
+      "status": "done",
+      "rows": [
+        "docs/operations/problem-register.md RC2 'Broker-branch data on hosted covers only 0050, 2317 and 2330' row (task and state cells)",
+        "docs/operations/problem-register.md RC3 'WP3.1 / WP3.3 tw_broker_top grows ... whole market' row"
+      ]
+    }
+  },
+  "scope_boundaries": {
+    "changed": [
+      "services/source_ingestion/finmind_broker_backfill.py",
+      "services/source_ingestion/connectors/finmind_taiwan.py",
+      "services/source_ingestion/daily_bars_store.py (tw_broker_top budget, session retention declaration and budget report)",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/tw_refresh_outcome_summary.py",
+      "scripts/check_market_data_budget.py",
+      "docs/04/.../SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (6A tw_broker_top row; the budget checker reads limits from it)",
+      "docs/operations/storage-manifest.json",
+      "docs/operations/problem-register.md",
+      "tests",
+      "services/source_ingestion/routers/ingest_operations.py (compact/legacy read compatibility)",
+      "services/source_ingestion/tests/test_broker_branch_flow_route.py (mixed keyed partition regression)",
+      "services/source_ingestion/retention.py (existing keyed sweeper session-retention plan)",
+      ".github/workflows/branch-ci.yml (Smoke acceptance aggregate job timeout only)",
+      "scripts/test_branch_ci_gate_selection.py (matching timeout contract)"
+    ],
+    "not_changed": [
+      "services/data-plane/taiwan_reference.py (keyed reader already reads both sides)",
+      "per-symbol service path other than dropping embedded raw rows",
+      "two-year backfill run (not executed by this task)",
+      "workflow .github/workflows/dev-tw-market-refresh.yml (the broker step already calls the deploy entrypoint)"
+    ]
+  },
+  "residual_findings": [
+    "taiwan_reference.read_tw_broker_top_rows reads the whole session partition (~80k rows) per query and filters by symbol; acceptable for the servant's per-question read but a per-symbol index would make it faster",
+    "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
+    "the two-year SponsorPro backfill still has not been run on hosted",
+    "Validation limitation: the expanded 242-test refresh/storage/retention batch and all four 180-second shards timed out. No expanded-batch pass is claimed. Focused broker/route, whole-market deploy and budget validation are recorded separately; required repository CI remains authoritative for its full suites.",
+    "Retention steady-state size excludes evidence-pinned out-of-window sessions; the existing sweep report exposes pinned count/sample. With dry-run, unresolved pins or the existing 20% deletion refusal, cleanup requires the existing market-data/Ops procedure. No evidence is auto-deleted to meet the normal 4.5 GB budget.",
+    "Current validation limitation: the complete existing test_retention.py suite exceeded its 180-second foreground bound (exit 124); no full-suite pass is claimed. New session-retention and existing keyed-write suites pass; independent review/CI must assess the broader suite."
+  ],
+  "verification": {
+    "previous_owner_commands": [
+      {"cmd": "pytest services/source_ingestion/tests/test_finmind_broker_whole_market.py test_finmind_broker_backfill.py test_finmind_taiwan_connectors.py test_finmind_broker_readback_provenance.py test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist", "result": "182 passed"},
+      {"cmd": "pytest scripts/test_deploy_nonprod_vm.py (3 shards of the collected ids)", "result": "81 passed 2 skipped; 82 passed; 75 passed"},
+      {"cmd": "pytest scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py", "result": "159 passed, 1 skipped"},
+      {"cmd": "pytest scripts/test_check_market_data_budget.py", "result": "19 passed"},
+      {"cmd": "python scripts/check_market_data_budget.py --only tw_broker_top", "result": "ok: day_bytes 2,623,088 <= 6,000,000; declared_budget_bytes 6,000,000 <= design row"},
+      {"cmd": "python scripts/check_storage_manifest.py", "result": "exit 0"},
+      {"cmd": "bash -n scripts/deploy_nonprod_vm.sh", "result": "ok"}
+    ],
+    "previous_owner_environment": "task worktree .venv-pantheon (python 3.12) + pyarrow 26.0.1 (the locked source-ingest version) on PYTHONPATH",
+    "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py; Python 3.12, pyarrow 26.0.1, no PYTHONPATH override.",
+    "commands": [
+      {"cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides (before fix)", "result": "1 failed as expected: compact 2454 buy/sell rows omitted", "exit_status": 1, "purpose": "defect reproduction"},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "6 passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "123 passed, 1 existing Starlette/httpx deprecation warning in 74.39s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py -k whole_market", "result": "4 passed, 236 deselected in 7.96s", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top", "result": "2 checks passed: measured gzip day_bytes=2623088 <= 6000000; declared limit matches design 6A", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && bash -n scripts/deploy_nonprod_vm.sh && git diff --check", "result": "manifest check passed with zero failures; shell syntax and diff checks passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py", "result": "TIMEOUT; not counted as passed. All 242 collected IDs were retried in four round-robin 180-second shards, which also timed out and are not counted as passed.", "exit_status": 124},
+      {"cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py", "result": "Local synthetic fixture only: 1000 symbols with both sides; 2000 compact rows, 15873 gzip bytes, 1325000 uncompressed bytes; probe passed. Missing-store and partial-receipt probes failed as expected. File SHA-256 and mtime snapshots unchanged; missing root not created. No hosted proof claimed.", "exit_status": 0},
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k 'finmind or whole_market'", "result": "16 passed, 165 deselected in 9.43s", "exit_status": 0}
+    ],
+    "script_shard_attempts": [
+      {"shard": 0, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 61, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 1, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 61, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 2, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 60, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 3, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 60, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"}
+    ],
+    "passed_focused_unique_tests": 143
+  },
+  "review_repair_20261127": {
+    "rejected_head": "f6fb354db0e22c09b54fe76b05f343ccb706ed5f",
+    "p1_source_anchor": "42679f9a7",
+    "p1_change": "Completion and zero-request reruns require persisted two-sided coverage and current expected-set readback, not the union of generated symbols. A missing side on even one stored symbol stays partial and retryable. No new job or writer; the existing once-per-session run and 750-receipt count cap are unchanged. One extra readback of the bounded <=6 MB session partition after a write; complete reruns already performed a partition readback.",
+    "validation": [
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py", "result": "22 passed in 12.42s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "128 passed, 1 existing Starlette/httpx deprecation warning in 51.02s", "exit_status": 0}
+    ],
+    "prior_p2_scope_hold": {
+      "required_actor": "Human/Ops",
+      "classification": "external scope/governance hold; declared SOURCE-BROKER-TOP-KEYED-SIDE-20261127 is already done and satisfied",
+      "missing_artifact": "services/source_ingestion/retention.py",
+      "governance_source": "scripts/ai_status.py command_artifact_contract: Only Human/Ops can revise task artifact contracts; only todo/blocked tasks may be revised. No canonical state or command runtime edited by this worker.",
+      "existing_owner_package": "RC3 WP3.1 market-data owner cb4f6795; SOURCE-RETENTION-SWEEPER-20261118-R2 is archived done, existing session-retention obligation remains on this task",
+      "acceptance_7": "pending deploy and real hosted read-only proof",
+      "disposition": "Resolved by governed Human/Ops artifact-contract addition 2026-11-27T12:35:22Z and reopen 12:35:59Z; retained here as prior-review history, superseded by retention_repair_20261127.",
+      "acceptance_3_at_hold": "still fails until implementation and independent review; no operator acceptance revision inferred",
+      "required_continuation_at_hold": "Human/Ops adds the missing artifact through artifact-contract while blocked and reopens this same task. Implement a retention_sessions=750 declaration in daily_bars_store.py, make the existing _plan_keyed sweeper retain the latest 750 stored session partitions (with existing pin protection), and add focused real-store dry-run/delete tests across 751 sessions spanning more than 750 calendar days, pinned old sessions and unchanged calendar-retention datasets. Reconcile cap/manifest/design/evidence, then refresh dev and hand off the new exact head to the assigned independent reviewer. Proposed continuation only: no retention implementation or cleanup-test pass is claimed."
+    }
+  },
+  "continuation_20261127": {
+    "prior_owner": "Claude",
+    "prior_reviewer": "Antigravity",
+    "canonical_assignment": "Prior dispatch used Codex / Codex2. Current governed dispatch 2026-11-27 assigns Codex / Antigravity2; exact-head handoff uses Antigravity2 as the independent cross-family reviewer.",
+    "base_sha": "d8dd4db14a47a688b6737fe1b582e57721d7151d",
+    "base_sync": "Merged current dev without rewriting the published PR history; f71a168ca preserves both independently appended storage-manifest entries.",
+    "reader_anchor": "a7fa56799",
+    "change": "broker-branch-flow picks fields from metadata.normalized_row, then metadata, then the record; canonical symbol/date/source aliases follow parse_tw_broker_top_record without importing the data-plane service.",
+    "regression": "Before the fix, the mixed-session HTTP query returned symbols_without_rows=[2454] and dropped its compact buy/sell rows; after the fix it returns buy and sell rows for legacy 2330 and compact 2454, with quantities, rank, broker and provenance verified."
+  },
+  "retention_repair_20261127": {
+    "reviewer": "Antigravity2",
+    "source_anchor": "0e8b6a927",
+    "change": "KEYED_DATASETS.tw_broker_top declares retention_sessions=750, retention_days=None. Existing RetentionSweeper._plan_keyed keeps the newest 750 valid stored session dates through today, including any pins inside that window; older pinned sessions are retained in addition. Weekends, holidays and missing collections do not consume stored sessions. Future or invalid date partitions cannot displace history. Receipts independently retain the newest 750 session files.",
+    "runtime_budget": "6 MB per session partition x 750 stored sessions <=4.5 GB after successful delete-mode sweep, plus evidence-pinned partitions outside the window (<=6 MB each, separately reported). Receipts retain 750 session files (~0.75 MB). Dry-run, unresolved pins or the 20% delete-share refusal do not enforce this steady-state cap.",
+    "cadence_and_writers": "Existing sweeper at most once per trading day; one replaced <=64 KiB report, no new writer or per-row evidence. Existing one partition + one ~1 KB receipt per published session.",
+    "validation": [
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_datasets_keyed_write.py", "result": "52 passed in 31.03s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "85 passed in 30.27s; one existing Starlette/httpx deprecation warning", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && git diff --check", "result": "2 byte-budget checks passed (2,623,088 compressed bytes <=6,000,000), storage manifest passed (378 entries, zero failures), diff check passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py", "exit_status": 124, "result": "Timed out after 180 seconds without a terminal pytest summary; not counted as passed. Session/keyed tests and focused existing keyed-retention regression are recorded separately."},
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never", "result": "1 passed in 30.58s", "exit_status": 0},
+      {"cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py", "result": "Local synthetic fixture only: read-only probe passed with keyed_retention_sessions=750, 1000 symbols / both sides, 2000 compact rows, 15873 gzip bytes; missing-store and partial receipts rejected. File bytes/mtimes unchanged and missing root not created. No hosted proof claimed.", "exit_status": 0}
+    ],
+    "hosted": "pending deploy and the committed read-only probe; no hosted claim",
+    "passed_focused_unique_tests": 138
+  },
+  "ci_return_20261127": {
+    "reviewed_source_head": "c813e190a948f1333222a23c8d48fe45fb9031f6",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/46001655826",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/46001655826/job/140530529457",
+    "annotation_command": "gh api repos/ajoe734/pantheon/check-runs/140530529457/annotations",
+    "annotation": "The job has exceeded the maximum execution time of 40m0s",
+    "job_started_at": "2026-11-27T13:43:40Z",
+    "job_completed_at": "2026-11-27T14:23:57Z",
+    "job_conclusion": "cancelled",
+    "last_command": "python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+    "last_command_started_at": "2026-11-27T14:23:15.925Z",
+    "last_command_cancelled_at": "2026-11-27T14:23:53.187Z",
+    "terminal_ci_results": [
+      {"command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300", "collected": 3071, "passed": 3064, "skipped": 7, "exit_status": 0, "seconds": 801, "finished_at": "2026-11-27T14:03:08.971Z"},
+      {"command": "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py", "passed": 238, "skipped": 2, "exit_status": 0, "seconds": 263.58, "finished_at": "2026-11-27T14:23:15.812Z"},
+      {"step": "Run tooling smoke gate", "passed": 375, "skipped": 1, "seconds": 125.18, "exit_status": 0},
+      {"step": "Run tooling integration-authority gate", "passed": 660, "seconds": 39.75, "exit_status": 0},
+      {"step": "Run delivery diagnostics and exit-status regressions", "passed": 1120, "skipped": 2, "seconds": 317.87, "exit_status": 0}
+    ],
+    "local_validation": [
+      {"command": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_deploy_nonprod_vm.py -k 'session or whole_market'", "result": "49 passed, 222 deselected in 49.96s", "exit_status": 0},
+      {"command": "timeout 180 .venv-pantheon/bin/python -m pytest -vv -s scripts/test_dev_tw_market_refresh.py", "exit_status": 124, "result": "The 132-item suite was still progressing at the 180-second foreground bound; no terminal pytest summary, so this is not a pass. Final running case: test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure[fail_token_exec-failed to read controller_token from running source-ingest container cid-source-ingest-recreated]. No failed assertion was emitted before timeout; earlier PASSED lines are not counted as a successful batch."},
+      {"command": "git diff --check && python3 -m json.tool docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json > /dev/null", "exit_status": 0, "result": "Whitespace and JSON syntax checks passed; evidence/register changes only."}
+    ],
+    "residual_findings": [
+      {"class": "RC1 required-check pipeline / WP1.4", "finding": "Serial mixed Smoke acceptance exhausts its global 40-minute job budget after source and deployment tests passed; the final refresh suite received only about 37 seconds. This run contains no failing source test assertion.", "owning_domain": "Remediation mechanisms / release CI pipeline (problem-register domain owners f4c32790 and 4d1476a3)", "existing_chain": "RC1 required check that fails under CI load / WP1.4, recorded in problem-register. Governed show confirmed prior SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125 are archived done; those terminal tasks are not new dependencies. The domain coordinator must reconcile the surviving aggregate-budget obligation.", "required_correction": "Human/Ops extended this same task artifact contract at 2026-11-27T14:36:59Z and reopened at 14:37:08Z. Timeout repaired in 2051aae54 (40 -> 55 minutes), preserving every gate command and assertion; fresh exact-head CI and review still required. No stage0 matrix or runner change.", "disposition": "Source correction now included in this same RC1 incident and task; fresh CI and Antigravity2 review pending, not a dependency on the completed keyed-side task."}
+    ],
+    "runtime_budget_change": "None: this continuation records diagnostic evidence only; no recurring job, runtime writer, cadence, count, storage cap or cleanup behaviour changes."
+  },
+  "ci_budget_repair_20261127": {
+    "authorization": "Human/Ops artifact-contract addition of branch-ci.yml and test_branch_ci_gate_selection.py, task generation 3; current assigned independent reviewer Antigravity2.",
+    "source_anchor": "2051aae54",
+    "base_sync": "878f9e425 merges dev 262a93081 without rewriting published PR history.",
+    "change": "Smoke acceptance timeout-minutes 40 -> 55. All gate commands, assertions, per-step bounds, test counts and failure handling retained; continue-on-error remains absent. Workflow contract updated to require the 55-minute aggregate bound.",
+    "runtime_budget": "CI only: at most 15 additional runner minutes per applicable Smoke acceptance job; unchanged push/PR event cadence, no recurring product job or new persistent writer. Existing daily compact broker partition, receipt, 6 MB day cap, 750-session retention and sweeper cleanup remain unchanged.",
+    "validation": [
+      {"command": "timeout 90 .venv-pantheon/bin/python -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision", "result": "27 tests passed in 1.006s", "exit_status": 0},
+      {"command": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_branch_ci_gate_selection.py scripts/test_dev_tw_market_refresh_workflow.py && git diff --check", "result": "96 passed, 3 subtests passed in 93.18s; diff check passed", "exit_status": 0},
+      {"command": "timeout 90 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py", "result": "2 byte-budget checks passed (2,623,088 compressed bytes <= 6,000,000); storage manifest passed, 378 entries, zero failures", "exit_status": 0},
+      {"command": "timeout 600 .venv-pantheon/bin/python -m pytest -q --durations=15 scripts/test_dev_tw_market_refresh.py", "result": "132 passed in 313.63s (0:05:13); terminal exit collected, no failures or skips", "exit_status": 0}
+    ],
+    "required_ci": "Fresh exact-head PR #7954 checks must finish; no CI success claimed by this pre-review manifest.",
+    "hosted": "Pending exact-version deploy and the committed read-only probe; no hosted acceptance claimed.",
+    "refresh_diagnosis": {
+      "finding": "Full unchanged 132-item suite takes 313.63s locally, so the prior 180s timeout was insufficient and the approximately 37s remaining in the previous CI job could not finish it. Tests exercise shell entrypoints, real local HTTP stubs, Python subprocesses and bounded retry/lease waits; assertions are retained.",
+      "slowest_cases_seconds": {
+        "test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session": 34.44,
+        "test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforces_ssf_readback": 16.93,
+        "test_refresh_entrypoint_taifex_non_blocking_failure_continues_and_records_redacted_log_while_twse_fails_closed": 13.3
+      },
+      "test_changes": "No test skipped, deselected or weakened; no refresh test implementation changed in this CI-budget repair."
+    }
+  }
+}

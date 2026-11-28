@@ -8486,7 +8486,7 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             "state": "healthy", "valid_until": future_iso, "status": "ready"
         }
 
-        # Case 1: When piastra lane capacity is 0, recovery is blocked without mutating or rotating
+        # Case 1: piastra capacity 0 and no configured PiAstra fallback: blocked, not mutated
         cfg_zero = copy.deepcopy(self.config)
         cfg_zero["agents"]["piastra"]["max_parallel"] = 0
         pair_zero = supervisor.worker_recovery_assignment_pair(cfg_zero, state, self.status, self.task, receipt)
@@ -8533,6 +8533,38 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         self.assertEqual(len(plan["events"]), 1)
         self.assertEqual(plan["events"][0]["target_agent"], "PiAstra")
         self.assertEqual(plan["events"][0]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+    def test_promotion_drain_reviewer_falls_back_only_when_incumbent_is_terminal(self) -> None:
+        # Replay 2026-11-27 AGORA-DECISION-EVIDENCE-KINDS-20261127: the review
+        # drained, then the reviewer's account went quota_terminal for days.
+        self._add_agent("antigravity", "Antigravity")
+        self._add_agent("claude2", "Claude2")
+        account = supervisor.normalize_agent_id("antigravity-account")
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][account] = 1
+        self.config["worker_reassignment"]["reviewer_fallbacks"]["Antigravity"] = ["Claude2"]
+        self.task.update(status="review", owner="Codex", reviewer="Antigravity")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "promotion_drained",
+                   "worker": {"agent": "Antigravity"}}
+
+        def pair(state: dict[str, object]) -> tuple[str, str] | None:
+            return supervisor.worker_recovery_assignment_pair(
+                self.config, state, self.status, self.task, receipt,
+            )
+
+        self.assertEqual(pair(self._state()), ("Codex", "Antigravity"))
+        busy = self._state()
+        busy["workers"]["w-busy"] = {
+            "provider": "antigravity", "status": "running", "task_id": "OTHER-TASK",
+        }
+        # Busy is not terminal: the drained continuation keeps its pair.
+        self.assertIsNone(pair(busy))
+        exhausted = self._state()
+        exhausted["delivery_health"]["accounts"][account] = {
+            "state": "retry_after", "reason_kind": "quota_terminal",
+            "retry_at": "2999-01-01T00:00:00Z",
+        }
+        self.assertEqual(pair(exhausted), ("Codex", "Claude2"))
 
     def test_approved_closeout_recovery_preserves_exact_reviewer_binding(self) -> None:
         self.task.update(

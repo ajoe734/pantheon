@@ -44,6 +44,24 @@ class WorkshopCompletenessSnapshotRequest(BaseModel):
     persist_readiness: bool = True
 
 
+class WorkshopDecisionRequest(BaseModel):
+    """Record the trader's answer to the next high-value workshop decision (V10 §4.1)."""
+
+    model_config = {"extra": "forbid"}
+
+    decision_id: Optional[str] = None
+    question_id: Optional[str] = None
+    option_id: Optional[str] = None
+    selected_option_id: Optional[str] = None
+    option_label: Optional[str] = None
+    custom_response: Optional[str] = None
+    use_servant_default: bool = False
+    resolves: List[str] = Field(default_factory=list)
+    trace_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+
+
+
 class WorkshopVersionCreateRequest(BaseModel):
     """Create a Registry-owned immutable StrategySpec draft version."""
 

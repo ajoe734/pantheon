@@ -41,6 +41,7 @@ from .extractor import (
     PrivacyConsentError,
     acknowledgement_request_digest,
     admit_evidence,
+    ensure_journal_evidence_emission_wired,
     evidence_request_digest,
     _dataset_version_id,
 )
@@ -78,6 +79,7 @@ def create_dataset_extraction_router(
     singleton is used.
     """
     store = dataset_store if dataset_store is not None else _default_store()
+    ensure_journal_evidence_emission_wired()
     router = APIRouter(tags=["agora-dataset"])
 
     def _meta(**extra: Any) -> Dict[str, Any]:

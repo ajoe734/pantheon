@@ -267,7 +267,7 @@ def map_action_to_direction_and_weight(
         direction = 1
         canonical = "hold"
         default_w = 1.0
-    elif raw in {"reject", "no_trade", "defer", "flat", "skip", "pass", "none"}:
+    elif raw in {"reject", "no_trade", "defer", "flat", "skip", "pass", "none", "shadow"}:
         return 0, 0.0, "no_trade"
     else:
         return 0, 0.0, raw
@@ -373,6 +373,7 @@ def _extract_lock_arms(lock: Mapping[str, Any]) -> Tuple[Dict[str, Dict[str, Any
                 or arm_raw.get("action")
                 or arm_raw.get("decision")
                 or arm_raw.get("verdict")
+                or arm_raw.get("stance")
             )
             if not suggestion:
                 unavail_reasons[arm_name] = _clean(
@@ -459,6 +460,8 @@ def _resolve_settlement_source(
 
     if arm_name == "human_actual":
         declared = _clean(arm_spec.get("execution_observation_kind"))
+        if declared == "declared_no_trade":
+            return "declared_no_trade", None, True
         if declared in SETTLEMENT_SOURCE_PRIORITY:
             return declared, None, (declared == "verified_broker_fill")
 
@@ -696,7 +699,10 @@ def settle_decision_lock(
         dec_price = decision_close if decision_close is not None else entry_price
         underlying_return_pct = (benchmark_exit_close / entry_price) - 1.0
 
-        if direction == 0 or weight == 0.0:
+        if direction == 0 or weight == 0.0 or settlement_source == "declared_no_trade":
+            direction = 0
+            weight = 0.0
+            canonical_action = "no_trade"
             gross_return_pct = 0.0
             cost_pct = 0.0
             net_return_pct = 0.0

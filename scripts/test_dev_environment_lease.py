@@ -1113,6 +1113,101 @@ class LeaseManagerTests(unittest.TestCase):
             manager(client).verify(local, max_heartbeat_age_seconds=120)
         self.assertEqual(client.get_content_calls, 1)
 
+    def _acquire_fresh_create(self, client: FakeClient) -> tuple[dict, lease.RemoteContent]:
+        acquired, content_sha, _ = manager(client).acquire(
+            mode="deployment",
+            owner="pantheon:current",
+            ttl_seconds=300,
+            wait_seconds=0,
+            poll_seconds=0.01,
+            expected_backend_sha="b" * 40,
+            run_url="https://github.com/ajoe734/pantheon/actions/runs/2",
+        )
+        self.assertEqual(client.put_expected_shas, [None])
+        current = lease.RemoteContent(
+            state=copy.deepcopy(client.state),
+            content_sha=str(client.content_sha),
+            server_now=client.now,
+        )
+        return lease.public_state(acquired, content_sha=content_sha), current
+
+    def test_initial_verify_retries_missing_lease_then_accepts_exact_acquisition(self) -> None:
+        client = FakeClient()
+        local, current = self._acquire_fresh_create(client)
+        client.scripted_content = [None, None, current]
+
+        result = manager(client).verify(
+            local,
+            max_heartbeat_age_seconds=120,
+            initial_visibility_wait_seconds=0.5,
+            initial_visibility_poll_seconds=0.001,
+        )
+
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["leaseId"], local["leaseId"])
+        self.assertEqual(result["owner"], "pantheon:current")
+        self.assertEqual(client.get_content_calls, 4)  # acquire + 404, 404, match
+
+    def test_initial_verify_missing_until_deadline_is_lease_lost(self) -> None:
+        client = FakeClient()
+        local, _ = self._acquire_fresh_create(client)
+        client.scripted_content = [None]
+
+        with self.assertRaisesRegex(
+            lease.LeaseLost,
+            r"initial lease visibility remained missing \(404\) until the bounded timeout",
+        ) as ctx:
+            manager(client).verify(
+                local,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=0.01,
+                initial_visibility_poll_seconds=0.001,
+            )
+        self.assertNotIsInstance(ctx.exception, lease.InitialLeaseVisibilityPending)
+        self.assertGreater(client.get_content_calls, 2)
+
+    def test_missing_lease_outside_initial_window_is_lost_immediately(self) -> None:
+        client = FakeClient()
+        local, _ = self._acquire_fresh_create(client)
+        client.state = None
+        client.content_sha = None
+        calls_after_acquire = client.get_content_calls
+
+        with self.assertRaisesRegex(lease.LeaseLost, "lease is missing$") as ctx:
+            manager(client).heartbeat(local, ttl_seconds=300)
+        self.assertNotIsInstance(ctx.exception, lease.InitialLeaseVisibilityPending)
+        self.assertEqual(client.get_content_calls, calls_after_acquire + 1)
+        self.assertEqual(client.put_expected_shas, [None])
+
+        with self.assertRaisesRegex(lease.LeaseLost, "lease is missing$") as ctx:
+            manager(client).verify(local, max_heartbeat_age_seconds=120)
+        self.assertNotIsInstance(ctx.exception, lease.InitialLeaseVisibilityPending)
+        self.assertEqual(client.get_content_calls, calls_after_acquire + 2)
+
+    def test_initial_verify_missing_then_foreign_owner_is_lost(self) -> None:
+        client = FakeClient()
+        local, _ = self._acquire_fresh_create(client)
+        foreign = lease.RemoteContent(
+            state=state_for(
+                owner="execute-plans:foreign",
+                mode="deployment",
+                lease_id="44444444-4444-4444-8444-444444444444",
+            ),
+            content_sha="3" * 40,
+            server_now=NOW,
+        )
+        client.scripted_content = [None, foreign]
+
+        with self.assertRaisesRegex(lease.LeaseLost, "immutable field .* changed") as ctx:
+            manager(client).verify(
+                local,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=10,
+                initial_visibility_poll_seconds=0.001,
+            )
+        self.assertNotIsInstance(ctx.exception, lease.InitialLeaseVisibilityPending)
+        self.assertEqual(client.get_content_calls, 3)  # acquire + 404 + foreign
+
     def test_initial_visibility_bounds_fail_closed(self) -> None:
         client = FakeClient()
         local = lease.public_state(state_for(), content_sha="blob-current")

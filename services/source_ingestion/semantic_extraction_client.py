@@ -301,19 +301,27 @@ class SemanticExtractionClient:
         self._official_rates = dict(official_rates) if official_rates is not None else None
         self._rate_provenance = "official_catalog_2026" if official_rates is None else "custom_override"
         self._fallback_to_baseline = fallback_to_baseline
+        self._hypothesis_deadline_override = hypothesis_deadline_seconds
         self._hypothesis_deadline_seconds = hypothesis_card_deadline_seconds(hypothesis_deadline_seconds)
+        self._hypothesis_token_limits_override = (
+            dict(hypothesis_token_limits) if hypothesis_token_limits is not None else None
+        )
         self._hypothesis_token_limits = dict(hypothesis_token_limits or hypothesis_card_token_limits())
 
     def token_limits_for(self, task_type: ExtractionTaskType) -> dict[str, int]:
         """HYPOTHESIS_CARD has its own limits; every other turn keeps the interactive ones."""
         if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
-            return dict(self._hypothesis_token_limits)
+            if self._hypothesis_token_limits_override is not None:
+                return dict(self._hypothesis_token_limits)
+            return hypothesis_card_token_limits()
         return dict(self._token_limits)
 
     @property
     def hypothesis_deadline_seconds(self) -> float:
         """Deadline of one HYPOTHESIS_CARD call (client, adapter and gateway)."""
-        return self._hypothesis_deadline_seconds
+        if self._hypothesis_deadline_override is not None:
+            return self._hypothesis_deadline_seconds
+        return hypothesis_card_deadline_seconds()
 
     def calculate_cost(
         self,

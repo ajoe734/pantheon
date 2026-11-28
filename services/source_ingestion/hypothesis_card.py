@@ -11,6 +11,7 @@ and every cited span must be an exact substring of the stored record text.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -19,9 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Optional
-
-import jsonschema
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 HYPOTHESIS_CARD_SCHEMA_VERSION = "hypothesis_card.v1"
 DEFAULT_DAILY_CALL_CAP = 400  # O-7
@@ -214,6 +213,32 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
     )
 
 
+# Version of the extraction-input digest projection below. Bump it when the
+# digest must stop matching answers recorded under the previous projection.
+EXTRACTION_INPUT_DIGEST_VERSION = "l2_extraction_input.v1"
+
+
+def extraction_input_digest(text: str, *, source_record_id: str, origin: str) -> str:
+    """Digest of exactly what one paid HYPOTHESIS_CARD call sends to the model.
+
+    The model sees the prompt ``build_hypothesis_prompt`` renders from the
+    (already truncated) record text, the source record id and the origin, and is
+    held to ``hypothesis_card_model_schema()``. Hashing the rendered prompt
+    instead of the text alone means a prompt wording change, a schema change or
+    a schema version bump each yields a new digest, so an answer is only reused
+    for an identical request. Run-local fields (fetch time, collector run,
+    bundle hash, raw archive path) never reach the model and are not part of it.
+    """
+    payload = {
+        "v": EXTRACTION_INPUT_DIGEST_VERSION,
+        "schema_version": HYPOTHESIS_CARD_SCHEMA_VERSION,
+        "model_schema": hypothesis_card_model_schema(),
+        "prompt": build_hypothesis_prompt(text, source_record_id=source_record_id, origin=origin),
+    }
+    canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -245,6 +270,8 @@ def finalize_card(
     prediction_rejections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a contract-valid card or raise :class:`CardRejected`."""
+    import jsonschema
+
     raw = structured.get("hypothesis_card")
     if not isinstance(raw, Mapping):
         raise CardRejected("no_card", "model returned no card")
@@ -345,17 +372,132 @@ def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
         return default
 
 
-# Per record version: at most this many model calls a UTC day and in total.
+# Per source (summed over every version of it): at most this many model calls a
+# UTC day and in total. Each collector run admits a new version of an unchanged
+# article, so a per-version count would reset every hour.
 MAX_RECORD_ATTEMPTS_PER_DAY = 3
 MAX_RECORD_ATTEMPTS_TOTAL = 6
+# Ledger outcomes of a paid call that are reused for the same source and an
+# identical extraction input (the worker closes them as ``card``,
+# ``no_hypothesis`` and ``hypothesis_rejected``). ``failed`` is never reused, so
+# a fixed-defect re-attempt still gets its call. ``irrelevant`` is decided
+# before any call from title and metadata as well as the text; it costs nothing
+# to decide again and is never reused across versions.
+REUSABLE_ANSWER_STATUSES = ("card", "no_hypothesis", "rejected")
 # Attempt rows of records untouched this long are pruned (the record has long
 # been closed or carded by then: 6 attempts at 3 a day take 2 days).
 RECORD_ATTEMPT_RETENTION_DAYS = 30
+# Hard row bound of ``input_answers``. A reuse touch keeps an answer alive past the
+# 30-day window, so "400 new rows/day x 30 days" alone does not bound the table;
+# the least recently used answers beyond this many rows are evicted on write
+# (an evicted answer only costs one later call, which the daily cap still bounds).
+MAX_INPUT_ANSWER_ROWS = 12000
 
 RESERVED = "reserved"
 DAILY_CAP_REACHED = "daily_cap"
 RECORD_DAILY_LIMIT = "record_daily_limit"
 RECORD_TOTAL_LIMIT = "record_total_limit"
+
+RELEASE_SWITCH_TABLE = "release_switch"
+INVALID_DEPLOYMENT_SHAS = frozenset({"", "unknown", "unresolved", "local-dev"})
+DEPLOYMENT_SHA_ENVS = ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT")
+RELEASE_SWITCHED_AT_ENVS = ("PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT")
+
+
+def valid_deployment_sha(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text or text.lower() in INVALID_DEPLOYMENT_SHAS:
+        return None
+    return text
+
+
+def active_deployment_sha(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    effective_env = env if env is not None else os.environ
+    for key in DEPLOYMENT_SHA_ENVS:
+        sha = valid_deployment_sha(effective_env.get(key))
+        if sha is not None:
+            return sha
+    return None
+
+
+def _switch_iso(value: Any) -> Optional[str]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        if val != val or val <= 0:
+            return None
+        return datetime.fromtimestamp(val, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def sync_release_switch_row(
+    connection: sqlite3.Connection,
+    *,
+    now_epoch: float,
+    deployment_sha: Optional[str] = None,
+    switched_at: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Optional[dict[str, str]]:
+    """Record the initial switch timestamp of a deployed release identity once per release SHA.
+
+    A same-release restart preserves the existing ``switched_at`` recorded when
+    ``deployment_sha`` first activated. When neither a valid deployment SHA nor an
+    explicit switch timestamp is present, nothing is written or guessed.
+    """
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS {RELEASE_SWITCH_TABLE} (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            deployment_sha TEXT NOT NULL,
+            switched_at TEXT NOT NULL
+        )"""
+    )
+    effective_env = env if env is not None else os.environ
+    effective_sha = valid_deployment_sha(deployment_sha) or active_deployment_sha(effective_env)
+    explicit_iso: Optional[str] = None
+    if switched_at is not None:
+        explicit_iso = _switch_iso(switched_at)
+        if explicit_iso is None:
+            raise ValueError("release_switch_time_invalid")
+    else:
+        for key in RELEASE_SWITCHED_AT_ENVS:
+            if key in effective_env:
+                raw = str(effective_env.get(key) or "").strip()
+                if raw:
+                    explicit_iso = _switch_iso(raw)
+                break
+    existing = connection.execute(
+        f"SELECT deployment_sha, switched_at FROM {RELEASE_SWITCH_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    if effective_sha is None and explicit_iso is None:
+        if existing is None:
+            return None
+        return {"deployment_sha": str(existing[0]), "switched_at": str(existing[1])}
+    if existing is not None:
+        existing_sha = str(existing[0] or "").strip()
+        existing_switched = str(existing[1] or "").strip()
+        if effective_sha is not None and existing_sha == effective_sha and explicit_iso is None:
+            return {"deployment_sha": existing_sha, "switched_at": existing_switched}
+    new_sha = effective_sha or (str(existing[0]).strip() if existing and str(existing[0]).strip() else "explicit-switch")
+    new_switched = explicit_iso or _switch_iso(now_epoch) or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connection.execute(
+        f"INSERT OR REPLACE INTO {RELEASE_SWITCH_TABLE}(singleton, deployment_sha, switched_at) VALUES (1, ?, ?)",
+        (new_sha, new_switched),
+    )
+    return {"deployment_sha": new_sha, "switched_at": new_switched}
 
 
 class ExtractionLedger:
@@ -363,14 +505,23 @@ class ExtractionLedger:
 
     Every model call is counted against the daily cap, including a retry of the
     same record on the same day (a failing provider must not spend past the
-    cap). A record version is called at most 3 times a UTC day and 6 times in
-    total; the ledger also counts calls that ended in a timeout or a
-    billing-only provider failure.
+    cap). A source is called at most 3 times a UTC day and 6 times in total,
+    summed over all its versions; the ledger also counts calls that ended in a
+    timeout or a billing-only provider failure. ``input_answers`` keeps the
+    terminal answer of each (source, extraction input digest) so an unchanged
+    version reuses it instead of paying again.
     """
 
-    def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        daily_cap: int | None = None,
+        now: Callable[[], Any] | None = None,
+    ) -> None:
         self._path = str(path) if path else ":memory:"
         self._daily_cap = DEFAULT_DAILY_CALL_CAP if daily_cap is None else max(0, int(daily_cap))
+        self._now = now
         self._lock = threading.Lock()
         self._keeper: Optional[sqlite3.Connection] = None
         if self._path == ":memory:":
@@ -387,6 +538,10 @@ class ExtractionLedger:
                 # The cap in force when the day's last call was reserved, so a
                 # reader in another process reports the writer's cap.
                 c.execute("ALTER TABLE calls ADD COLUMN cap INTEGER")
+            if "sources" not in cols:
+                # Distinct sources that got their first call of the day: with
+                # ``n`` this gives calls per distinct source in one point read.
+                c.execute("ALTER TABLE calls ADD COLUMN sources INTEGER NOT NULL DEFAULT 0")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
@@ -402,10 +557,48 @@ class ExtractionLedger:
             # The former "one free reservation per record and day" table let a
             # failing provider retry the same record without counting it.
             c.execute("DROP TABLE IF EXISTS reservations")
+            # Rows written before per-source counting are keyed by version
+            # digest; new calls go to the digest '' row of the source and every
+            # read sums all rows of the source (a PK prefix range).
             c.execute(
                 "CREATE TABLE IF NOT EXISTS record_attempts (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " total INTEGER NOT NULL, day TEXT NOT NULL, day_n INTEGER NOT NULL,"
                 " last_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, digest))"
+            )
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS input_answers (source_id TEXT NOT NULL, input_digest TEXT NOT NULL,"
+                " outcome TEXT NOT NULL, detail TEXT NOT NULL, event_id INTEGER, card TEXT,"
+                " day TEXT NOT NULL, PRIMARY KEY(source_id, input_digest))"
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS input_answers_day_idx ON input_answers(day)")
+            sync_release_switch_row(c, now_epoch=self._now_epoch())
+
+    def _now_epoch(self) -> float:
+        if callable(self._now):
+            val = self._now()
+            if isinstance(val, datetime):
+                return (val if val.tzinfo else val.replace(tzinfo=timezone.utc)).timestamp()
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return float(val)
+            iso = _switch_iso(val)
+            if iso is not None:
+                return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+        return datetime.now(timezone.utc).timestamp()
+
+    def record_release_switch(
+        self,
+        *,
+        deployment_sha: Optional[str] = None,
+        switched_at: Any = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> Optional[dict[str, str]]:
+        with self._lock, self._conn() as c:
+            return sync_release_switch_row(
+                c,
+                now_epoch=self._now_epoch(),
+                deployment_sha=deployment_sha,
+                switched_at=switched_at,
+                env=env,
             )
 
     @property
@@ -429,40 +622,40 @@ class ExtractionLedger:
         """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
         Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
-        record version already had 3 calls today) and ``record_total_limit``
-        (6 calls in total). A refusal consumes nothing.
+        source already had 3 calls today, over all its versions) and
+        ``record_total_limit`` (6 calls in total). A refusal consumes nothing.
+        ``digest`` is accepted for callers that pass the version digest; the
+        limits no longer depend on it.
         """
+        del digest
         with self._lock, self._conn() as c:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
             day = _today()
-            row = None
+            today_n = 0
             if source_id:
-                row = c.execute(
-                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
-                    (source_id, digest),
-                ).fetchone()
-                if row is not None:
-                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
-                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
-                        return RECORD_TOTAL_LIMIT
-                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
-                        return RECORD_DAILY_LIMIT
+                total, today_n = self._source_attempts(c, source_id, day)
+                if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                    return RECORD_TOTAL_LIMIT
+                if today_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                    return RECORD_DAILY_LIMIT
             used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             if (used_row[0] if used_row else 0) >= self._daily_cap:
                 return DAILY_CAP_REACHED
+            first_today = 1 if source_id and today_n == 0 else 0
             c.execute(
-                "INSERT INTO calls(day, n, cap) VALUES(?, 1, ?)"
-                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap",
-                (day, self._daily_cap),
+                "INSERT INTO calls(day, n, cap, sources) VALUES(?, 1, ?, ?)"
+                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap,"
+                " sources = sources + excluded.sources",
+                (day, self._daily_cap, first_today),
             )
             if source_id:
                 c.execute(
-                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,?,1,?,1)"
+                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,'',1,?,1)"
                     " ON CONFLICT(source_id, digest) DO UPDATE SET total = total + 1,"
                     " day_n = CASE WHEN day = excluded.day THEN day_n + 1 ELSE 1 END, day = excluded.day",
-                    (source_id, digest, day),
+                    (source_id, day),
                 )
                 cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
                 c.execute("DELETE FROM record_attempts WHERE day < ?", (cutoff,))
@@ -472,21 +665,27 @@ class ExtractionLedger:
         """Consume one call; False when the cap or a per-record limit refuses."""
         return self.reserve_attempt(source_id, digest) == RESERVED
 
+    @staticmethod
+    def _source_attempts(c: sqlite3.Connection, source_id: str, day: str) -> tuple[int, int]:
+        """(calls in total, calls today) of one source, summed over all its version rows."""
+        row = c.execute(
+            "SELECT COALESCE(SUM(total), 0), COALESCE(SUM(CASE WHEN day = ? THEN day_n ELSE 0 END), 0)"
+            " FROM record_attempts WHERE source_id=?",
+            (day, source_id),
+        ).fetchone()
+        return int(row[0] or 0), int(row[1] or 0)
+
     def can_attempt(self, source_id: str = "", digest: str = "") -> str:
-        """Read-only check whether one call may be reserved now for (source_id, digest)."""
+        """Read-only check whether one call may be reserved now for this source (any version)."""
+        del digest
         with self._lock, self._conn() as c:
             day = _today()
             if source_id:
-                row = c.execute(
-                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
-                    (source_id, digest),
-                ).fetchone()
-                if row is not None:
-                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
-                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
-                        return RECORD_TOTAL_LIMIT
-                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
-                        return RECORD_DAILY_LIMIT
+                total, today_n = self._source_attempts(c, source_id, day)
+                if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                    return RECORD_TOTAL_LIMIT
+                if today_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                    return RECORD_DAILY_LIMIT
             used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             if (used_row[0] if used_row else 0) >= self._daily_cap:
                 return DAILY_CAP_REACHED
@@ -507,31 +706,105 @@ class ExtractionLedger:
             )
             if source_id:
                 c.execute(
-                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=?",
-                    (reason[:500], source_id, digest),
+                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=''",
+                    (reason[:500], source_id),
                 )
 
     def record_attempts(self, source_id: str, digest: str = "") -> dict[str, Any]:
+        """Calls of one source summed over its versions (``digest`` is ignored)."""
+        del digest
+        day = _today()
+        with self._conn() as c:
+            total, today_n = self._source_attempts(c, source_id, day)
+            reason_row = c.execute(
+                "SELECT last_reason FROM record_attempts WHERE source_id=? AND last_reason <> ''"
+                " ORDER BY day DESC, digest = '' DESC LIMIT 1",
+                (source_id,),
+            ).fetchone()
+        return {"total": total, "today": today_n, "last_reason": str(reason_row[0]) if reason_row else ""}
+
+    def input_answer(self, source_id: str, input_digest: str) -> Optional[dict[str, Any]]:
+        """The terminal answer already recorded for this source and extraction input, if any."""
+        if not source_id or not input_digest:
+            return None
         with self._conn() as c:
             row = c.execute(
-                "SELECT total, day, day_n, last_reason FROM record_attempts WHERE source_id=? AND digest=?",
-                (source_id, digest),
+                "SELECT outcome, detail, event_id, card FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
             ).fetchone()
         if row is None:
-            return {"total": 0, "today": 0, "last_reason": ""}
+            return None
         return {
-            "total": int(row[0]),
-            "today": int(row[2]) if row[1] == _today() else 0,
-            "last_reason": str(row[3] or ""),
+            "outcome": str(row[0]),
+            "detail": str(row[1] or ""),
+            "event_id": int(row[2]) if row[2] is not None else None,
+            "card": json.loads(row[3]) if row[3] else None,
         }
+
+    def retire_input_answer(self, source_id: str, input_digest: str) -> bool:
+        """Remove a cached input answer when it is retired (e.g. a fixed-defect answer)."""
+        if not source_id or not input_digest:
+            return False
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            )
+            return (cur.rowcount or 0) > 0
+
+    def put_input_answer(
+        self, source_id: str, input_digest: str, *, outcome: str, detail: str,
+        event_id: Optional[int], card: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Keep the first non-defective terminal answer per (source, input); prune answers unused for 30 days."""
+        if not source_id or not input_digest or outcome not in REUSABLE_ANSWER_STATUSES:
+            return
+        day = _today()
+        trimmed_detail = detail[:500]
+        card_json = json.dumps(dict(card), sort_keys=True) if card is not None else None
+        with self._lock, self._conn() as c:
+            existing = c.execute(
+                "SELECT outcome, detail, card FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            ).fetchone()
+            if existing is None:
+                c.execute(
+                    "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (source_id, input_digest, outcome, trimmed_detail, event_id, card_json, day),
+                )
+            elif not is_fixed_defect_input_answer(outcome, trimmed_detail) and (
+                is_fixed_defect_input_answer(str(existing[0] or ""), str(existing[1] or ""))
+                or (str(existing[0] or "") == "card" and not existing[2])
+            ):
+                c.execute(
+                    "UPDATE input_answers SET outcome=?, detail=?, event_id=?, card=?, day=?"
+                    " WHERE source_id=? AND input_digest=?",
+                    (outcome, trimmed_detail, event_id, card_json, day, source_id, input_digest),
+                )
+            cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
+            c.execute("DELETE FROM input_answers WHERE day < ?", (cutoff,))
+            c.execute(
+                "DELETE FROM input_answers WHERE rowid IN ("
+                "SELECT rowid FROM input_answers ORDER BY day DESC, rowid DESC LIMIT -1 OFFSET ?)",
+                (MAX_INPUT_ANSWER_ROWS,),
+            )
+
+    def touch_input_answer(self, source_id: str, input_digest: str) -> None:
+        """A reuse keeps the answer alive while versions of the source keep arriving."""
+        with self._lock, self._conn() as c:
+            c.execute(
+                "UPDATE input_answers SET day=? WHERE source_id=? AND input_digest=?",
+                (_today(), source_id, input_digest),
+            )
 
     def summary(self) -> dict[str, Any]:
         """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT n, timeouts, billing, unavailable FROM calls WHERE day=?", (_today(),)
+                "SELECT n, timeouts, billing, unavailable, sources FROM calls WHERE day=?", (_today(),)
             ).fetchone()
-        n, timeouts, billing, unavailable = (int(v or 0) for v in (row or (0, 0, 0, 0)))
+        n, timeouts, billing, unavailable, sources = (int(v or 0) for v in (row or (0, 0, 0, 0, 0)))
         return {
             "day": _today(),
             "calls": n,
@@ -539,6 +812,8 @@ class ExtractionLedger:
             "timeout_calls": timeouts,
             "billing_failed_calls": billing,
             "unavailable_calls": unavailable,
+            "distinct_sources": sources,
+            "calls_per_source": round(n / sources, 3) if sources else None,
         }
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:
@@ -561,13 +836,15 @@ class ExtractionLedger:
     def record(
         self, source_id: str, outcome: str, detail: str = "",
         usage: Optional[Mapping[str, Any]] = None,
-    ) -> None:
+    ) -> Optional[int]:
+        """Append one outcome event; returns its event id."""
         usage_json = json.dumps(dict(usage), sort_keys=True) if usage is not None else None
         with self._lock, self._conn() as c:
-            c.execute(
+            cursor = c.execute(
                 "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
                 (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500], usage_json),
             )
+            return int(cursor.lastrowid) if cursor.lastrowid is not None else None
 
     def events(self, source_id: str | None = None) -> list[dict[str, Any]]:
         with self._conn() as c:
@@ -596,6 +873,82 @@ class ExtractionLedger:
 UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
 
 
+# Checked-in first-run ritual markers (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
+# Matched case-insensitively (after normalizing curly apostrophes ’/‘/ʼ to ') against
+# no_hypothesis abstention reasons and L2 ledger event details so the 60 sources
+# (126 ritual rows out of 157 no_hypothesis:% outbox rows measured 2026-11-27 06:45Z)
+# closed by OpenClaw's stock BOOTSTRAP.md ritual since 2026-11-26 12:51Z are
+# re-attempted once while genuine abstentions stay closed.
+FIRST_RUN_RITUAL_MARKERS: tuple[str, ...] = (
+    "bootstrap.md",
+    "identity.md",
+    "soul.md",
+    "identity.md and user.md",
+    "user.md and identity.md",
+    "update user.md",
+    "fill in user.md",
+    "complete user.md",
+    "user.md - about your human",
+    "first-run setup",
+    "first run setup",
+    "first-run ritual",
+    "first run ritual",
+    "first-run bootstrap",
+    "first run bootstrap",
+    "first-run workspace",
+    "first run workspace",
+    "first-time setup",
+    "first time setup",
+    "workspace setup is still open",
+    "workspace setup is still pending",
+    "workspace setup is pending",
+    "workspace setup is open",
+    "setup is still open",
+    "setup is still pending",
+    "setup is pending",
+    "bootstrap is still pending",
+    "bootstrap is pending",
+    "bootstrap pending",
+    "bootstrap setup",
+    "bootstrap ritual",
+    "bootstrap workflow",
+    "fresh workspace",
+    "what should i call you",
+    "what to call you",
+    "what should we call each other",
+    "call each other",
+    "you can call me",
+    "how should i address you",
+    "how to address you",
+    "who am i? who are you?",
+    "figure out who i am",
+    "who i am and who you are",
+    "just came online",
+    "just woke up",
+    "i'd go by",
+    "怎麼稱呼",
+    "如何稱呼",
+    "稱呼你",
+    "稱呼您",
+    "初次啟動",
+    "初次設定",
+    "首次啟動",
+    "首次設定",
+)
+
+
+def _normalize_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'").replace("\u02bc", "'")
+
+
+def has_first_run_ritual_marker(text: str | None) -> bool:
+    """True when ``text`` carries any OpenClaw stock first-run ritual marker."""
+    haystack = _normalize_apostrophes(str(text or "")).strip().lower()
+    if not haystack:
+        return False
+    return any(marker in haystack for marker in FIRST_RUN_RITUAL_MARKERS)
+
+
 @dataclass(frozen=True)
 class FixedDefectOutcome:
     """A terminal extraction failure caused by our own defect that a deployed fix removed.
@@ -609,33 +962,63 @@ class FixedDefectOutcome:
     code: str
     fix: str
     description: str
-    required_substrings: tuple[str, ...]
+    required_substrings: tuple[str, ...] = ()
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
+    prefix: str = "hypothesis_extraction_failed:"
+    skip_reason_prefix: str = "hypothesis_extraction_failed:"
+    skip_reason_prefixes: tuple[str, ...] = ()
+    case_insensitive: bool = False
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        if not text.startswith("hypothesis_extraction_failed:"):
+        if self.skip_reason_prefixes:
+            prefixes = self.skip_reason_prefixes
+        elif self.prefix != "hypothesis_extraction_failed:":
+            prefixes = (self.prefix,)
+        else:
+            prefixes = (self.skip_reason_prefix,)
+        if not any(text.startswith(prefix) for prefix in prefixes):
             return False
-        if not all(needle in text for needle in self.required_substrings):
+        normalized = _normalize_apostrophes(text) if self.case_insensitive else text
+        haystack = normalized.lower() if self.case_insensitive else normalized
+        req = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.required_substrings)
+            if self.case_insensitive
+            else self.required_substrings
+        )
+        any_s = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.any_substrings)
+            if self.case_insensitive
+            else self.any_substrings
+        )
+        excl = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.excluded_substrings)
+            if self.case_insensitive
+            else self.excluded_substrings
+        )
+        if not all(needle in haystack for needle in req):
             return False
-        if self.any_substrings and not any(needle in text for needle in self.any_substrings):
+        if any_s and not any(needle in haystack for needle in any_s):
             return False
-        if any(needle in text for needle in self.excluded_substrings):
+        if any(needle in haystack for needle in excl):
             return False
         return True
 
 
-# Hosted backlog (2026-11-26 15:05Z, backend b0eb2c259): 130 sources have a
-# defect-closed row as their newest outbox version (from 302 anyOf rows across
-# 141 sources, 31 budget_breach rows across 25 sources, and 4 abstention_reason
-# maxLength rows). One re-attempt per newest version needs 130 model calls
-# (32.5% of the 400-call daily cap), draining in 1 day alongside up to 270
-# fresh relevant records (or 1-2 days if fresh relevant volume exceeds 270
-# calls on day 1, or up to 390 calls on day 1 / 650 calls over 2 days if
-# transient provider timeouts trigger per-record retries up to 3/day, 6/total).
-HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 130
-HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 130
+# Hosted backlog: 130 sources from DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126
+# (2026-11-26 15:05Z, backend b0eb2c259: 302 anyOf rows across 141 sources,
+# 31 budget_breach rows across 25 sources, and 4 abstention_reason maxLength rows)
+# plus 60 distinct sources (126 ritual rows out of 157 no_hypothesis:% rows
+# measured 2026-11-27 06:45Z) closed no_hypothesis with first-run ritual text
+# since 2026-11-26 12:51Z (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127)
+# = 190 cumulative defect-closed sources across FIXED_DEFECT_REATTEMPT_OUTCOMES.
+# One re-attempt per newest version needs at most 190 model calls (47.5% of the
+# 400-call daily cap; 60 calls for the current ritual backlog alone), draining
+# in 1 day alongside up to 210 fresh relevant records (or 1-2 days if fresh
+# volume or transient retries exceed the day-1 remainder).
+HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 190
+HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 190
 HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS = 1
 
 FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
@@ -673,6 +1056,32 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         required_substrings=("budget_breach",),
         excluded_substrings=("no model call made", "> 3072"),
     ),
+    FixedDefectOutcome(
+        code="compiler_proposer_15s_deadline_timeout",
+        fix="L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127",
+        description=(
+            "HypothesisCompiler client_proposer used the hard-coded 15 s "
+            "_PROPOSE_TIMEOUT_SECONDS deadline and no max_output_tokens, failing testable "
+            "cards with hypothesis_compiler_failed: proposer_failed"
+        ),
+        required_substrings=("proposer_failed",),
+        prefix="hypothesis_compiler_failed:",
+        skip_reason_prefix="hypothesis_compiler_failed:",
+    ),
+    FixedDefectOutcome(
+        code="openclaw_workspace_first_run_ritual",
+        fix="OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+        description=(
+            "OpenClaw stock first-run ritual (BOOTSTRAP.md plus stock IDENTITY/USER/SOUL) "
+            "was injected into workspace-structured-extraction before skipBootstrap and "
+            "workspace retirement, closing 60 sources as no_hypothesis with ritual text"
+        ),
+        prefix="no_hypothesis:",
+        skip_reason_prefix="no_hypothesis:",
+        skip_reason_prefixes=("no_hypothesis:", "hypothesis_extraction_failed:"),
+        any_substrings=FIRST_RUN_RITUAL_MARKERS,
+        case_insensitive=True,
+    ),
 )
 
 
@@ -680,13 +1089,28 @@ def fixed_defect_for_skip_reason(skip_reason: str | None) -> Optional[FixedDefec
     """Return the FixedDefectOutcome that matches ``skip_reason``, or None.
 
     Irrelevant (``l2_irrelevant``), admission-denied (``l2_admission_denied``),
-    model-abstained (``no_hypothesis``), citation-rejected (``hypothesis_rejected``)
-    and unfixed schema/JSON failures never match.
+    genuine model-abstained (``no_hypothesis`` without first-run ritual markers),
+    citation-rejected (``hypothesis_rejected``) and unfixed schema/JSON failures
+    never match.
     """
     for outcome in FIXED_DEFECT_REATTEMPT_OUTCOMES:
         if outcome.matches(skip_reason):
             return outcome
     return None
+
+
+def is_fixed_defect_input_answer(outcome: str | None, detail: str | None) -> bool:
+    """True when a cached ``input_answers`` row carries a fixed defect (e.g. first-run ritual)."""
+    status = str(outcome or "").strip()
+    if not status or status == "card":
+        return False
+    prefix = {
+        "rejected": "hypothesis_rejected",
+        "failed": "hypothesis_extraction_failed",
+    }.get(status, status)
+    text = str(detail or "").strip()
+    skip_reason = f"{prefix}: {text}" if text else prefix
+    return fixed_defect_for_skip_reason(skip_reason) is not None
 
 
 def call_usage(result: Any) -> Optional[dict[str, Optional[int]]]:
@@ -767,18 +1191,65 @@ class HypothesisExtractor:
         value = getattr(self._client, "hypothesis_deadline_seconds", None)
         return float(value) if isinstance(value, (int, float)) else hypothesis_card_deadline_seconds()
 
-    def extract(self, source: Any, *, digest: str = "") -> ExtractionOutcome:
-        """Extract (or replay the cached card for) one source version."""
+    def extract(self, source: Any, *, digest: str = "", reuse_answers: bool = True) -> ExtractionOutcome:
+        """Extract (or replay the cached card for) one source version.
+
+        ``reuse_answers=False`` (a fixed-defect re-attempt) skips the reuse of an
+        earlier answer for the same extraction input and always makes the call,
+        within the per-source attempt limits and the daily cap.
+        """
         if digest:
             cached = self._ledger.get_card(source.source_id, digest)
             if cached is not None:
                 return ExtractionOutcome("card", card=cached, detail="cached")
-        outcome = self._extract(source, digest)
+        outcome = self._extract(source, digest, reuse_answers=reuse_answers)
         if digest and outcome.card is not None:
+            # Also for a reused card: the discovery summary reads the card of
+            # the version it reports.
             self._ledger.put_card(source.source_id, digest, outcome.card)
         return outcome
 
-    def _extract(self, source: Any, digest: str = "") -> ExtractionOutcome:
+    def _reuse_answer(self, sid: str, input_digest: str) -> Optional[ExtractionOutcome]:
+        """The earlier terminal answer for this exact input, as this version's outcome."""
+        prior = self._ledger.input_answer(sid, input_digest)
+        if prior is None or prior["outcome"] not in REUSABLE_ANSWER_STATUSES:
+            return None
+        if is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+            self._ledger.retire_input_answer(sid, input_digest)
+            return None
+        if prior["outcome"] == "card" and not isinstance(prior["card"], dict):
+            self._ledger.retire_input_answer(sid, input_digest)
+            return None
+        event_id = prior["event_id"]
+        # No ledger event per reuse: ``events`` has no retention and an unchanged
+        # article is refetched hourly. The reusing outbox row records the earlier
+        # event id in its skip reason (outbox rows are pruned after 7 days).
+        self._ledger.touch_input_answer(sid, input_digest)
+        detail = f"reused L2 event {event_id}, extraction input unchanged"
+        if prior["detail"]:
+            detail += f"; {prior['detail']}"
+        return ExtractionOutcome(
+            prior["outcome"], card=prior["card"] if prior["outcome"] == "card" else None, detail=detail,
+            extra={"reused_event_id": event_id, "input_digest": input_digest},
+        )
+
+    def _answered(
+        self, sid: str, input_digest: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
+        *, usage: Optional[Mapping[str, Any]] = None, card: Optional[Mapping[str, Any]] = None,
+    ) -> ExtractionOutcome:
+        """Record the answer of a paid call and keep it for an unchanged later version."""
+        event_id = self._ledger.record(sid, status, card["testability"] if card is not None else detail, usage=usage)
+        self._ledger.put_input_answer(
+            sid, input_digest, outcome=status, detail=detail, event_id=event_id, card=card,
+        )
+        merged = dict(extra or {})
+        merged["event_id"] = event_id
+        merged["input_digest"] = input_digest
+        if card is not None:
+            return ExtractionOutcome("card", card=dict(card), detail=detail, extra=merged)
+        return ExtractionOutcome(status, detail=detail, extra=merged)
+
+    def _extract(self, source: Any, digest: str = "", *, reuse_answers: bool = True) -> ExtractionOutcome:
         from services.source_ingestion.semantic_extraction import (
             ExtractionTaskType,
             SemanticExtractionAdmission,
@@ -826,6 +1297,17 @@ class HypothesisExtractor:
                 sid, "admission_denied", json.dumps(explanation, sort_keys=True, ensure_ascii=False),
                 {"reason": admission.denial_reason, "code": admission.denial_code},
             )
+        # One paid call per source and unchanged extraction input: a later
+        # version whose prompt input is identical reuses the terminal answer.
+        input_digest = extraction_input_digest(prompt_text, source_record_id=sid, origin=origin)
+        if reuse_answers:
+            reused = self._reuse_answer(sid, input_digest)
+            if reused is not None:
+                return reused
+        else:
+            prior = self._ledger.input_answer(sid, input_digest)
+            if prior is not None and is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+                self._ledger.retire_input_answer(sid, input_digest)
         reservation = self._ledger.reserve_attempt(sid, digest)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
@@ -854,7 +1336,17 @@ class HypothesisExtractor:
                 return self._done(sid, "unavailable", detail, usage=usage)
             return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
-            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage)
+            reason = result.abstention_reason or "model_abstained"
+            if has_first_run_ritual_marker(reason):
+                return self._done(
+                    sid,
+                    "failed",
+                    f"openclaw_workspace_first_run_ritual: {reason}",
+                    usage=usage,
+                )
+            return self._answered(
+                sid, input_digest, "no_hypothesis", reason, usage=usage,
+            )
         try:
             prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
@@ -865,13 +1357,14 @@ class HypothesisExtractor:
                 prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
-            return self._done(sid, "rejected", str(exc), {"code": exc.code}, usage=usage)
+            return self._answered(sid, input_digest, "rejected", str(exc), {"code": exc.code}, usage=usage)
         for rejection in prediction_rejections:
             self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
-            return self._done(sid, "no_hypothesis", "not_testable", usage=usage)
-        self._ledger.record(sid, "card", card["testability"], usage=usage)
-        return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
+            return self._answered(sid, input_digest, "no_hypothesis", "not_testable", usage=usage)
+        return self._answered(
+            sid, input_digest, "card", "", {"prediction_rejections": prediction_rejections}, usage=usage, card=card,
+        )
 
     def _done(
         self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
@@ -913,8 +1406,10 @@ __all__ = [
     "CardRejected",
     "DAILY_CAP_REACHED",
     "DEFAULT_DAILY_CALL_CAP",
+    "EXTRACTION_INPUT_DIGEST_VERSION",
     "ExtractionLedger",
     "ExtractionOutcome",
+    "FIRST_RUN_RITUAL_MARKERS",
     "FIXED_DEFECT_REATTEMPT_OUTCOMES",
     "FixedDefectOutcome",
     "HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG",
@@ -925,12 +1420,20 @@ __all__ = [
     "MAX_RECORD_ATTEMPTS_TOTAL",
     "RECORD_DAILY_LIMIT",
     "RECORD_TOTAL_LIMIT",
+    "RELEASE_SWITCH_TABLE",
     "RESERVED",
+    "REUSABLE_ANSWER_STATUSES",
+    "active_deployment_sha",
     "card_to_strategy_seed_metadata",
+    "extraction_input_digest",
     "extractor_from_env",
     "finalize_card",
     "fixed_defect_for_skip_reason",
+    "has_first_run_ritual_marker",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
+    "is_fixed_defect_input_answer",
+    "sync_release_switch_row",
+    "valid_deployment_sha",
     "verify_cited_spans",
 ]

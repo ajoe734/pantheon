@@ -49,14 +49,35 @@ def good_board():
             "counts": {
                 "collected_text_records": {"value": 120, "status": "ok"},
                 "hypothesis_cards_today": {"value": 3, "status": "ok"},
-                "llm_calls_today": {"value": 40, "status": "ok", "cap": 400},
+                "llm_calls_today": {"value": 40, "status": "ok", "cap": 400, "distinct_sources": 36},
                 "templates_registered": {"value": 182, "status": "ok"},
                 "templates_evaluated": {"value": 171, "status": "ok"},
                 "passes": {"value": 0, "status": "ok"},
             },
             "templates": [{"template_id": "t1", "evaluation": {"evaluation_context": {
                 "governed_snapshot_id": "gmd-abc123", "window_end": "2026-11-27"}}}],
-            "discovery_summary": {"collected_by_source_family": {"news": 120}, "closed_last_24h": {"by_reason": {}}},
+            "discovery_summary": {
+                "collected_by_source_family": {"news": 120},
+                "closed_last_24h": {"by_reason": {}},
+                "llm_calls": {
+                    "status": "ok",
+                    "source": "source_ingestion.l2_extraction_ledger",
+                    "scope": "service",
+                    "utc_day": "2026-11-28",
+                    "calls": 40,
+                    "daily_cap": 400,
+                    "cap_source": "ledger",
+                    "release_switched_at": "2026-11-28T06:00:00Z",
+                    "ritual_events_status": "ok",
+                    "ritual_events_since_switch": 0,
+                    "events_examined_since_switch": 3,
+                    "ritual_events_truncated": False,
+                    "ritual_events_scan_hit_cap": False,
+                    "ritual_events_oldest_scanned_at": "2026-11-28T05:00:00Z",
+                    "ritual_event_timestamps": [],
+                    "ritual_events_sample_truncated": False,
+                },
+            },
         },
         "meta": {"surfaces": {k: ok() for k in (
             "alpha_factory", "alpha_factory_templates", "alpha_factory_demands", "alpha_factory_runs",
@@ -98,6 +119,8 @@ def test_working_pipeline_passes_and_says_no_strategy_passed():
     assert gate["status"] == "passed" and gate["values"]["by_reason"] == {"survivorship_limited": 1}
     assert stage(report, "governed_market_dataset")["values"] == {"snapshot_id": "gmd-abc123", "day": "2026-11-27"}
     assert stage(report, "hypothesis_cards")["values"]["cap"] == 400
+    assert stage(report, "hypothesis_cards")["values"]["ritual_events_since_switch"] == 0
+    assert report["ritual_events_since_switch"] == 0
 
 
 def test_hosted_2026_11_25_fixture_fails_naming_every_broken_stage():
@@ -137,6 +160,27 @@ def test_cards_over_cap_fails():
     assert stage(run(board), "hypothesis_cards")["reason"] == "llm_calls_over_cap"
 
 
+def test_calls_per_distinct_source_is_reported_and_fails_above_1_5():
+    board = good_board()
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["distinct_sources"] == 36 and values["calls_per_source"] == round(40 / 36, 3)
+    # Hosted 2026-11-27: 211 answered calls for 78 distinct news sources.
+    board["data"]["counts"]["llm_calls_today"].update(value=211, distinct_sources=78)
+    over = stage(run(board), "hypothesis_cards")
+    assert over["status"] == "failed" and over["reason"] == "llm_calls_per_source_over_limit"
+    assert over["values"]["calls_per_source"] == round(211 / 78, 3) and over["values"]["limit"] == 1.5
+    board["data"]["counts"]["llm_calls_today"].update(value=60, distinct_sources=40)
+    assert stage(run(board), "hypothesis_cards")["status"] == "passed"
+
+
+def test_calls_without_a_distinct_source_count_are_reported_as_not_measurable():
+    board = good_board()
+    del board["data"]["counts"]["llm_calls_today"]["distinct_sources"]
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["calls_per_source"] is None
+    assert values["calls_per_source_status"] == "distinct_sources_not_reported"
+
+
 def test_no_verified_card_names_disabled_extraction():
     board = good_board()
     board["data"]["discovered"] = []
@@ -150,6 +194,413 @@ def test_old_card_does_not_count_as_new():
     board["data"]["discovered"][0]["since"] = "2026-11-20T08:00:00Z"
     assert stage(run(board), "hypothesis_cards")["status"] == "failed"
     assert stage(run(board), "no_fallback_drafts")["status"] == "passed"  # zero NEW drafts
+
+
+def test_ritual_marked_events_since_release_switch_must_be_zero():
+    switched_at = "2026-11-28T06:00:00Z"
+    pre_switch_and_genuine = [
+        {
+            "ts": "2026-11-27T05:15:00Z",
+            "outcome": "no_hypothesis",
+            "detail": (
+                "First-run setup is pending, so I haven't extracted the document yet. "
+                "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+            ),
+        },
+        {
+            "ts": "2026-11-28T07:00:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "The article reports quarterly earnings with no testable market mechanism.",
+        },
+    ]
+    assert dpd.count_ritual_events_since_switch(pre_switch_and_genuine, switched_at) == 0
+    passing = dpd.judge(good_board(), good_health(), NOW, ledger_events=pre_switch_and_genuine, switched_at=switched_at)
+    assert passing["verdict"] == "passed"
+    assert passing["ritual_events_since_switch"] == 0
+    assert stage(passing, "hypothesis_cards")["values"]["ritual_events_since_switch"] == 0
+
+    post_switch_ritual = [
+        *pre_switch_and_genuine,
+        {
+            "ts": "2026-11-28T07:30:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "First-run setup is pending; what should I call you?",
+        },
+        {
+            "ts": "2026-11-28T08:10:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "請問該怎麼稱呼你？本次工作階段無法安全完成 BOOTSTRAP.md",
+        },
+    ]
+    assert dpd.count_ritual_events_since_switch(post_switch_ritual, switched_at) == 2
+    failing = dpd.judge(good_board(), good_health(), NOW, ledger_events=post_switch_ritual, switched_at=switched_at)
+    assert failing["verdict"] == "failed" and failing["failed_stages"] == ["hypothesis_cards"]
+    assert failing["ritual_events_since_switch"] == 2
+    hc = stage(failing, "hypothesis_cards")
+    assert hc["status"] == "failed" and hc["reason"] == "ritual_marked_events_since_switch:2"
+    assert hc["values"]["ritual_events_since_switch"] == 2
+
+    board_with_summary_events = good_board()
+    board_with_summary_events["data"]["discovery_summary"]["switched_at"] = switched_at
+    board_with_summary_events["data"]["discovery_summary"]["events"] = post_switch_ritual
+    from_board = run(board_with_summary_events)
+    assert from_board["verdict"] == "failed"
+    assert stage(from_board, "hypothesis_cards")["reason"] == "ritual_marked_events_since_switch:2"
+
+
+def test_missing_unreadable_or_incomplete_ritual_observation_or_switch_time_fails(monkeypatch):
+    monkeypatch.delenv("ACCEPTANCE_RELEASE_SWITCHED_AT", raising=False)
+
+    # Missing observation (neither count nor event list) must fail, never default to 0.
+    missing_obs = good_board()
+    missing_obs["data"]["discovery_summary"]["llm_calls"] = {
+        "status": "ok",
+        "release_switched_at": "2026-11-28T06:00:00Z",
+    }
+    report = run(missing_obs)
+    assert report["verdict"] == "failed"
+    assert report["ritual_events_since_switch"] is None
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_missing"
+
+    # Missing release switch time must fail.
+    missing_switch = good_board()
+    del missing_switch["data"]["discovery_summary"]["llm_calls"]["release_switched_at"]
+    report = run(missing_switch)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:release_switch_time_missing"
+
+    # Invalid release switch time must fail.
+    invalid_switch = good_board()
+    invalid_switch["data"]["discovery_summary"]["llm_calls"]["release_switched_at"] = "not-a-timestamp"
+    report = run(invalid_switch)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:release_switch_time_invalid"
+
+    # Truncated ledger event scan must fail.
+    truncated_obs = good_board()
+    truncated_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_truncated"] = True
+    report = run(truncated_obs)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_truncated"
+
+    # Unreadable ritual_events_status must fail.
+    unreadable_obs = good_board()
+    unreadable_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_status"] = "unavailable"
+    unreadable_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_reason"] = "extraction_ledger_events_missing"
+    report = run(unreadable_obs)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:extraction_ledger_events_missing"
+    )
+
+    # Timestamp list or event list with missing/invalid timestamp must fail.
+    bad_ts_list = good_board()
+    bad_ts_list["data"]["discovery_summary"]["llm_calls"]["ritual_event_timestamps"] = ["bad-ts"]
+    report = run(bad_ts_list)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:ledger_event_timestamp_invalid"
+    )
+
+    bad_event_ts = good_board()
+    bad_event_ts["data"]["discovery_summary"]["llm_calls"]["ritual_events"] = [
+        {"ts": "bad-ts", "outcome": "no_hypothesis", "detail": "what should I call you?"}
+    ]
+    report = run(bad_event_ts)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:ledger_event_timestamp_invalid"
+    )
+
+
+def test_bounded_scan_earlier_switch_override_requires_proven_coverage(tmp_path, monkeypatch):
+    import sqlite3
+    from services.source_ingestion import discovery_summary as ds
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
+
+    now_epoch = NOW.timestamp()
+    queue = DistillationJobQueue(tmp_path / "distill_job_queue.jsonl", now=lambda: now_epoch)
+    ledger_path = tmp_path / "l2_extraction_ledger.sqlite"
+    ledger = ExtractionLedger(ledger_path, daily_cap=400, now=lambda: now_epoch)
+    assert ledger.reserve_call("s1", "d1")
+
+    with sqlite3.connect(ledger_path) as conn:
+        for ts, sid, detail in (
+            ("2026-11-28T07:00:00Z", "s-bad-07", "First-run setup is pending; what should I call you?"),
+            ("2026-11-28T08:00:00Z", "s-ok-08", "Quarterly revenue report with no testable mechanism."),
+            ("2026-11-28T09:00:00Z", "s-ok-09", "Monthly sales summary with no testable mechanism."),
+            ("2026-11-28T10:00:00Z", "s-ok-10", "Earnings call transcript with no testable mechanism."),
+        ):
+            conn.execute(
+                "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+                (ts, sid, "no_hypothesis", detail, None),
+            )
+
+    monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 2)
+    summary_bounded = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at="2026-11-28T11:00:00Z",
+    )
+    llm_bounded = summary_bounded["llm_calls"]
+    assert llm_bounded["ritual_event_timestamps"] == []
+    assert "ritual_events" not in llm_bounded
+    assert llm_bounded["ritual_events_truncated"] is False
+    assert llm_bounded["ritual_events_scan_hit_cap"] is True
+    assert llm_bounded["ritual_events_oldest_scanned_at"] == "2026-11-28T09:00:00Z"
+
+    board_bounded = good_board()
+    board_bounded["data"]["discovery_summary"]["llm_calls"] = llm_bounded
+
+    # Producer cutoff 11:00 is covered (oldest scanned 09:00 < 11:00) and passes.
+    rep_11 = dpd.judge(board_bounded, good_health(), NOW)
+    assert rep_11["verdict"] == "passed"
+    assert rep_11["ritual_events_since_switch"] == 0
+
+    # Overriding cutoff to 06:00 (earlier than oldest scanned 09:00 when scan hit cap=2) must fail unavailable,
+    # never falsely pass with count=0.
+    rep_06 = dpd.judge(board_bounded, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_06["verdict"] == "failed"
+    assert rep_06["ritual_events_since_switch"] is None
+    assert stage(rep_06, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_truncated"
+
+    # Without ritual_events_scan_hit_cap metadata, an earlier switch override also fails closed.
+    board_no_cap_meta = copy.deepcopy(board_bounded)
+    del board_no_cap_meta["data"]["discovery_summary"]["llm_calls"]["ritual_events_scan_hit_cap"]
+    rep_no_meta = dpd.judge(board_no_cap_meta, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_no_meta["verdict"] == "failed"
+    assert rep_no_meta["ritual_events_since_switch"] is None
+    assert (
+        stage(rep_no_meta, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:observation_missing_for_switch_override"
+    )
+
+    # With scan cap >= total rows (scan_hit_cap=False), overriding cutoff to 06:00 has proven full-ledger
+    # coverage and catches the 07:00 ritual event without exposing any source_id or detail.
+    monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 10)
+    summary_full = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at="2026-11-28T11:00:00Z",
+    )
+    assert summary_full["llm_calls"]["ritual_event_timestamps"] == ["2026-11-28T07:00:00Z"]
+    assert "ritual_events" not in summary_full["llm_calls"]
+    assert "s-bad-07" not in json.dumps(summary_full)
+    board_full = good_board()
+    board_full["data"]["discovery_summary"]["llm_calls"] = summary_full["llm_calls"]
+    rep_full_06 = dpd.judge(board_full, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_full_06["verdict"] == "failed"
+    assert rep_full_06["ritual_events_since_switch"] == 1
+    assert stage(rep_full_06, "hypothesis_cards")["reason"] == "ritual_marked_events_since_switch:1"
+
+
+def test_e2e_check_and_main_with_real_queue_ledger_and_discovery_summary(tmp_path, server, monkeypatch, capsys):
+    import sqlite3
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.discovery_summary import read_discovery_summary
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    now_epoch = NOW.timestamp()
+    switch_iso = "2026-11-28T06:00:00Z"
+    queue_path = tmp_path / "distill_job_queue.jsonl"
+    ledger_path = tmp_path / "l2_extraction_ledger.sqlite"
+    queue = DistillationJobQueue(queue_path, now=lambda: now_epoch)
+    ledger = ExtractionLedger(ledger_path, daily_cap=400)
+
+    def make_source(sid: str) -> SourceRecord:
+        return SourceRecord(
+            source_id=sid,
+            connector_id="conn",
+            source_type="news",
+            title=f"TSMC supply chain {sid}",
+            content_ref=f"https://example.test/{sid}",
+            status="normalized",
+            metadata={"tenant_id": "tenant-dev", "body": "台積電月營收創高"},
+        )
+
+    # 1. Carded record + pre-switch ritual event + post-switch genuine abstention -> check/main must PASS.
+    assert ledger.reserve_call("s-card", "d-card")
+    job_card = queue.enqueue_source_record(make_source("s-card"), enqueued_at=now_epoch - 3600)
+    queue.mark_done(job_card.job_id, seed_id="seed-s-card", processed_at=now_epoch - 1800)
+    ledger.put_card("s-card", job_card.source_digest, {"claim": "Monthly revenue surprise drifts", "testability": "testable"})
+
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T05:00:00Z",
+                "s-pre-ritual",
+                "no_hypothesis",
+                "First-run setup is still open; what should I call you?",
+                None,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T07:00:00Z",
+                "s-post-genuine",
+                "no_hypothesis",
+                "Quarterly revenue report states no testable market mechanism.",
+                None,
+            ),
+        )
+
+    def project_board_from_summary(summary: dict) -> dict:
+        board = good_board()
+        collected = summary["collected_text_records"]
+        closed = summary["closed_text_records"]
+        cards = summary["hypothesis_cards"]
+        llm = summary["llm_calls"]
+        board["data"]["counts"]["collected_text_records"] = {"value": collected["last_24h"]["total"], "status": "ok"}
+        board["data"]["counts"]["hypothesis_cards_today"] = {"value": cards["today"], "status": "ok"}
+        board["data"]["counts"]["llm_calls_today"] = {
+            "value": llm["calls"],
+            "status": llm["status"],
+            "cap": llm["daily_cap"],
+            "scope": llm["scope"],
+        }
+        board["data"]["discovered"] = [
+            {
+                "kind": "hypothesis_card",
+                "source_id": c["source_id"],
+                "title": c["title"],
+                "claim": c["claim"],
+                "claim_status": c["claim_status"],
+                "since": c["carded_at"],
+            }
+            for c in cards["newest"]
+        ] + [d for d in board["data"]["discovered"] if d.get("kind") == "research_demand"]
+        board["data"]["discovery_summary"] = {
+            "window": summary.get("window"),
+            "collected_by_source_family": collected["last_24h"]["by_source_family"],
+            "closed_last_24h": closed["last_24h"],
+            "closed_total": closed["total"],
+            "llm_calls": llm,
+            "bounds": summary.get("bounds"),
+        }
+        return board
+
+    summary_clean = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at=switch_iso,
+    )
+    assert summary_clean["llm_calls"]["ritual_events_since_switch"] == 0
+    Handler.board = project_board_from_summary(summary_clean)
+    Handler.health = good_health()
+
+    for key, value in {
+        "ACCEPTANCE_BFF_URL": server,
+        "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+        "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("ACCEPTANCE_RELEASE_SWITCHED_AT", raising=False)
+
+    assert dpd.main(now=NOW) == 0
+    out_clean = capsys.readouterr().out
+    assert "VERDICT passed" in out_clean
+    assert '"ritual_events_since_switch": 0' in out_clean
+
+    # 2. Post-switch ritual failure (outbox collapses reason to hypothesis_extraction_failed) -> check/main must FAIL.
+    assert ledger.reserve_call("s-post-ritual", "d-post-ritual")
+    job_ritual = queue.enqueue_source_record(make_source("s-post-ritual"), enqueued_at=now_epoch - 1200)
+    queue.mark_skipped(
+        job_ritual.job_id,
+        reason="hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？",
+        processed_at=now_epoch - 900,
+    )
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T08:30:00Z",
+                "s-post-ritual",
+                "failed",
+                "openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？",
+                None,
+            ),
+        )
+
+    summary_contaminated = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at=switch_iso,
+    )
+    assert summary_contaminated["closed_text_records"]["last_24h"]["by_reason"] == {"hypothesis_extraction_failed": 1}
+    assert summary_contaminated["llm_calls"]["ritual_events_since_switch"] == 1
+    Handler.board = project_board_from_summary(summary_contaminated)
+
+    assert dpd.main(now=NOW) == 1
+    out_contaminated = capsys.readouterr().out
+    assert "VERDICT failed failed=hypothesis_cards" in out_contaminated
+    assert "reason=ritual_marked_events_since_switch:1" in out_contaminated
+    assert '"ritual_events_since_switch": 1' in out_contaminated
+
+    # 3. Missing release switch input (even with controller started_at present after the 08:30Z event)
+    #    must fail closed with release_switch_time_missing rather than guessing started_at or import time.
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
+    (tmp_path / "distill_controller_state.json").write_text(
+        json.dumps({"started_at": "2026-11-28T10:00:00Z"}), encoding="utf-8"
+    )
+    summary_no_switch = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+    )
+    assert summary_no_switch["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert summary_no_switch["llm_calls"]["ritual_events_reason"] == "release_switch_time_missing"
+    Handler.board = project_board_from_summary(summary_no_switch)
+    assert dpd.main(now=NOW) == 1
+    out_no_switch = capsys.readouterr().out
+    assert "VERDICT failed failed=hypothesis_cards" in out_no_switch
+    assert "reason=unreadable:ritual_events_since_switch:release_switch_time_missing" in out_no_switch
+
+    # 4. Same-release restart: release SHA switched at 06:00Z, restarted at 10:00Z on the same SHA.
+    release_sha = "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    queue.record_release_switch(deployment_sha=release_sha, switched_at=switch_iso)
+    ledger.record_release_switch(deployment_sha=release_sha, switched_at=switch_iso)
+    (tmp_path / "distill_controller_state.json").write_text(
+        json.dumps({"deployment": {"git_sha": release_sha}, "started_at": "2026-11-28T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_SHA", release_sha)
+    DistillationJobQueue(queue_path, now=lambda: now_epoch)
+    ExtractionLedger(ledger_path, daily_cap=400, now=lambda: now_epoch)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    summary_restarted = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+    )
+    assert summary_restarted["llm_calls"]["release_switched_at"] == switch_iso
+    assert summary_restarted["llm_calls"]["ritual_events_since_switch"] == 1
+    Handler.board = project_board_from_summary(summary_restarted)
+    assert dpd.main(now=NOW) == 1
+    out_restarted = capsys.readouterr().out
+    assert "reason=ritual_marked_events_since_switch:1" in out_restarted
 
 
 @pytest.mark.parametrize("card", [
@@ -367,6 +818,80 @@ def test_probe_skips_naming_missing_variables():
     env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")}
     done = subprocess.run([sys.executable, str(PROBE)], env=env, capture_output=True, text=True, timeout=60)
     assert done.returncode == 77 and "ACCEPTANCE_BFF_URL" in done.stdout
+
+
+def test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages(server):
+    from datetime import timedelta
+
+    clean_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("ACCEPTANCE_") and k not in ("PYTHONPATH", "PYTHONHOME")
+    }
+    skip_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert skip_done.returncode == 77, skip_done.stdout + skip_done.stderr
+    assert "ACCEPTANCE_BFF_URL" in skip_done.stdout
+    assert "ModuleNotFoundError" not in (skip_done.stdout + skip_done.stderr)
+
+    now_utc = datetime.now(timezone.utc)
+    iso = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    today_str = now_utc.strftime("%Y-%m-%d")
+    switch_iso = iso(now_utc - timedelta(hours=3))
+    recent_iso = iso(now_utc - timedelta(hours=1))
+
+    live_board = good_board()
+    live_board["data"]["discovered"][0]["since"] = recent_iso
+    live_board["data"]["discovered"][1]["since"] = iso(now_utc - timedelta(days=5))
+    live_board["data"]["scaffolded"][0]["latest_at"] = recent_iso
+    live_board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = today_str
+    live_board["data"]["discovery_summary"]["llm_calls"].update(
+        utc_day=today_str,
+        release_switched_at=switch_iso,
+        ritual_events_oldest_scanned_at=iso(now_utc - timedelta(hours=4)),
+    )
+    live_health = good_health()
+    live_health["data"]["last_success"]["at"] = recent_iso
+    live_health["data"]["downstream_actual_state"]["checked_at"] = recent_iso
+
+    Handler.board = live_board
+    Handler.health = live_health
+    run_env = {
+        **clean_env,
+        "ACCEPTANCE_BFF_URL": server,
+        "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+        "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE",
+    }
+    pass_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert pass_done.returncode == 0, pass_done.stdout + pass_done.stderr
+    assert "VERDICT passed" in pass_done.stdout
+    assert '"ritual_events_since_switch": 0' in pass_done.stdout
+
+    ritual_board = copy.deepcopy(live_board)
+    ritual_board["data"]["discovery_summary"]["llm_calls"]["ritual_events_since_switch"] = 1
+    ritual_board["data"]["discovery_summary"]["llm_calls"]["ritual_event_timestamps"] = [recent_iso]
+    Handler.board = ritual_board
+    fail_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert fail_done.returncode == 1, fail_done.stdout + fail_done.stderr
+    assert "VERDICT failed failed=hypothesis_cards" in fail_done.stdout
+    assert "reason=ritual_marked_events_since_switch:1" in fail_done.stdout
 
 
 def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):

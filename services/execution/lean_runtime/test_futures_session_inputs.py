@@ -921,6 +921,23 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             again["signal_id"] = f"{sig['signal_id']}-later-bar"
             again["timestamp"] = "2026-11-11T11:30:00Z"
             again["metadata"]["decision_id"] = f"{meta['decision_id']}-later-bar"
+            # This synthetic later signal is a new decision, so it cannot
+            # import the original decision's immutable park event or journey.
+            from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+            again["metadata"].pop("parked_decision_event")
+            envelope = mint_trade_envelope(
+                sig["correlation_envelope"],
+                producer="execution.paper-signal-producer",
+                now=again["timestamp"],
+            )
+            again["correlation_envelope"] = envelope
+            again["journey_id"] = envelope["journey_id"]
+            again["metadata"].update(
+                signal_id=again["signal_id"],
+                correlation_envelope=envelope,
+                journey_id=envelope["journey_id"],
+            )
             self._prod["store"].enqueue(again)
             processed_before = len(service._consumer._processed_signal_ids)
             self._drain_at(service, "2026-11-11T11:30:00Z")

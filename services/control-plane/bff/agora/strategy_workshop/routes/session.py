@@ -23,7 +23,12 @@ from .._common import (
 )
 from ..events import _ws_publish
 from ..operations import CanonicalOperationError, bind_workshop_authorization
-from ..readiness import build_readiness_assessment as _build_readiness_assessment
+from ..readiness import (
+    build_next_high_value_decision,
+    build_readiness_assessment as _build_readiness_assessment,
+    project_completeness_response,
+    resolve_decision_choice,
+)
 from ..cards import _build_workshop_cards, _merge_cards
 from ..runner import (
     admit_reconstruction_job,
@@ -37,6 +42,7 @@ _LOG = logging.getLogger(__name__)
 from ..schemas import (
     WorkshopCompletenessSnapshotRequest,
     WorkshopCreateRequest,
+    WorkshopDecisionRequest,
     WorkshopMessageRequest,
     WorkshopReadinessReassessRequest,
 )
@@ -74,14 +80,28 @@ def build_session_router(
             raise bff_error(exc.http_status, exc.error_code,
                             "Workshop message content is unavailable", "private_content_store") from None
 
+    def _publish_completeness(workshop_id: str, outcome: Dict[str, Any]) -> None:
+        snapshot = outcome.get("completeness_snapshot")
+        if snapshot:
+            _ws_publish(
+                workshop_id,
+                "workshop.completeness.updated",
+                {
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "strategy_version_id": snapshot.get("strategy_version_id"),
+                },
+                utc_now_fn=utc_now,
+            )
+
     def _run_queued_reconstruction(*, workshop_id: str, tenant_id: str, user_id: str, job_id: str) -> None:
         """Background job body: failures are already recorded on the card."""
         try:
-            run_reconstruction_job(
+            outcome = run_reconstruction_job(
                 store=store, canonical=canonical, workshop_id=workshop_id,
                 tenant_id=tenant_id, user_id=user_id, job_id=job_id,
                 private_content_store=private_content_store,
             )
+            _publish_completeness(workshop_id, outcome)
         except ReconstructionProviderError as exc:
             _LOG.warning("workshop reconstruction job %s failed: %s (%s)",
                          job_id, exc.reason, exc.adapter_error_code)
@@ -464,6 +484,16 @@ def build_session_router(
             },
         }
 
+    def _latest_reconstruction(workshop_id: str) -> Optional[Dict[str, Any]]:
+        if not hasattr(store, "list_workshop_cards"):
+            return None
+        for card in store.list_workshop_cards(workshop_id):
+            if isinstance(card, dict) and card.get("card_type") == "strategy_reconstruction":
+                payload = card.get("payload")
+                if isinstance(payload, dict) and isinstance(payload.get("reconstruction"), dict):
+                    return payload["reconstruction"]
+        return None
+
     # ------------------------------------------------------------------ #
     # GET /bff/agora/workshops/{workshop_id}/completeness — latest snapshot
     # ------------------------------------------------------------------ #
@@ -485,6 +515,17 @@ def build_session_router(
                 resource_id=workshop_id,
             )
         snapshot = store.get_latest_completeness_snapshot(workshop_id)
+        if snapshot is not None:
+            events = store.list_events(workshop_id)
+            readiness = _readiness_from_store_or_state(session)
+            reconstruction = _latest_reconstruction(workshop_id)
+            snapshot = project_completeness_response(
+                snapshot=snapshot,
+                session=session,
+                events=events,
+                reconstruction=reconstruction,
+                readiness=readiness,
+            )
         return {
             "data": snapshot,
             "meta": {
@@ -612,6 +653,14 @@ def build_session_router(
         new_etag = f'W/"workshop:{workshop_id}:v{new_lock_version}"'
         response.headers["ETag"] = new_etag
         effective_assessment = stored_assessment or assessment
+        reconstruction = _latest_reconstruction(workshop_id)
+        projected_snapshot = project_completeness_response(
+            snapshot=snapshot,
+            session=session,
+            events=events,
+            reconstruction=reconstruction,
+            readiness=effective_assessment,
+        ) or snapshot
         _ws_publish(
             workshop_id,
             "workshop.completeness.updated",
@@ -633,8 +682,224 @@ def build_session_router(
         )
         return {
             "data": {
-                "snapshot": snapshot,
+                "snapshot": projected_snapshot,
                 "readiness": effective_assessment,
+                "blocks": projected_snapshot.get("blocks", []),
+                "twelve_blocks": projected_snapshot.get("twelve_blocks", []),
+                "next_decision": projected_snapshot.get("next_decision"),
+            },
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": new_etag,
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # POST /bff/agora/workshops/{workshop_id}/decisions — record decision
+    # ------------------------------------------------------------------ #
+    @router.post("/bff/agora/workshops/{workshop_id}/decisions", status_code=201)
+    def post_workshop_decision(
+        workshop_id: str,
+        response: Response,
+        body: WorkshopDecisionRequest,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    ) -> Dict[str, Any]:
+        scope = _scope(authorization, x_tenant_id, write=True)
+        if if_match is None:
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(
+                428,
+                ErrorCode.PRECONDITION_FAILED,
+                "If-Match header is required for workshop decisions",
+                "missing_if_match",
+                suggestion="GET the workshop first and supply the returned ETag in If-Match",
+            )
+        if idempotency_key is None:
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+            )
+        session = store.get_session(workshop_id)
+        if session is None:
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
+        if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
+        expected_version = _parse_etag_lock_version(if_match, workshop_id)
+        current_version = int(session.get("lock_version", 1))
+        if expected_version != current_version:
+            from services.control_plane.bff.models import ErrorCode
+            current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+        events = store.list_events(workshop_id)
+        snapshot = store.get_latest_completeness_snapshot(workshop_id)
+        reconstruction = _latest_reconstruction(workshop_id)
+        current_decision = build_next_high_value_decision(
+            snapshot=snapshot,
+            session=session,
+            events=events,
+            reconstruction=reconstruction,
+        )
+        try:
+            resolved = resolve_decision_choice(
+                next_decision=current_decision,
+                decision_id=body.decision_id,
+                question_id=body.question_id,
+                option_id=body.option_id,
+                selected_option_id=body.selected_option_id,
+                option_label=body.option_label,
+                custom_response=body.custom_response,
+                use_servant_default=body.use_servant_default,
+                resolves=body.resolves,
+            )
+        except ValueError as exc:
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                str(exc),
+                "invalid_decision_choice",
+            ) from None
+
+        if hasattr(store, "check_and_record_idempotency_key"):
+            idem_scope = (
+                f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
+                f":POST:/bff/agora/workshops/decisions"
+            )
+            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
+                from services.control_plane.bff.models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Duplicate Idempotency-Key",
+                    idempotency_key,
+                )
+
+        event_id = str(uuid.uuid4())
+        trace_id = (
+            x_trace_id
+            or x_correlation_id
+            or body.trace_id
+            or body.correlation_id
+            or session.get("trace_id")
+            or f"trace-{uuid.uuid4().hex[:12]}"
+        )
+        private_answer_text = resolved.get("private_response_text") or resolved["option_label"]
+        response_kind = str(resolved.get("response_kind") or "option")
+        decision_plaintext = (
+            f"[策略決策] decision_id={resolved['decision_id']} "
+            f"option_id={resolved['option_id']} "
+            f"kind={response_kind} "
+            f"resolves={','.join(resolved['resolves'])}\n"
+            f"問題：{resolved['question']}\n"
+            f"交易員裁示選項 ({resolved['option_id']})：{private_answer_text}"
+        )
+        private = _private_put(
+            tenant_id=scope.tenant_id,
+            owner_user_id=scope.user_id,
+            workshop_id=workshop_id,
+            event_id=event_id,
+            content_type="text/plain",
+            plaintext=decision_plaintext.encode("utf-8"),
+            retention_class="workshop_default",
+            idempotency_key=idempotency_key,
+        )
+        private_ref = private.private_content_ref
+        redacted_summary = f"Workshop decision {resolved['decision_id']}: {resolved['option_id']}"
+
+        kind_tag = (
+            "kind:workshop_decision_freeform"
+            if resolved.get("is_freeform")
+            else "kind:workshop_decision"
+        )
+        payload_refs = [
+            kind_tag,
+            f"decision_id:{resolved['decision_id']}",
+            f"option_id:{resolved['option_id']}",
+            *[f"resolves:{target}" for target in resolved["resolves"]],
+        ]
+        event, _new_version = store.append_event_cas(workshop_id, expected_version, {
+            "event_id": event_id,
+            "workshop_id": workshop_id,
+            "actor_type": "operator",
+            "event_type": "message",
+            "private_content_ref": private_ref,
+            "redacted_summary": redacted_summary,
+            "payload_refs_json": payload_refs,
+            "trace_id": trace_id,
+            "correlation_id": trace_id,
+        })
+        if event is None:
+            from services.control_plane.bff.models import ErrorCode
+            private_content_store.discard_failed_write(
+                private_content_ref=private_ref,
+                tenant_id=scope.tenant_id,
+                owner_user_id=scope.user_id,
+            )
+            current_lock_version = _new_version if _new_version is not None else 1
+            current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+        new_etag = f'W/"workshop:{workshop_id}:v{_new_version}"'
+        response.headers["ETag"] = new_etag
+        _ws_publish(
+            workshop_id,
+            "workshop.decision.recorded",
+            {
+                "event_id": event["event_id"],
+                "sequence_no": event["sequence_no"],
+                "decision_id": resolved["decision_id"],
+                "option_id": resolved["option_id"],
+                "response_kind": response_kind,
+                "trace_id": event.get("trace_id", trace_id),
+            },
+            utc_now_fn=utc_now,
+        )
+        return {
+            "data": {
+                "event_id": event["event_id"],
+                "sequence_no": event["sequence_no"],
+                "decision_id": resolved["decision_id"],
+                "question_id": resolved["question_id"],
+                "question": resolved["question"],
+                "response_kind": response_kind,
+                "option_id": resolved["option_id"],
+                "option_label": resolved["option_label"],
+                "used_servant_default": resolved["used_servant_default"],
+                "resolves": resolved["resolves"],
+                "target_blocks": resolved["target_blocks"],
             },
             "meta": {
                 "snapshot_at": utc_now(),
@@ -659,16 +924,28 @@ def build_session_router(
         events = store.list_events(workshop_id)
         snapshot = store.get_latest_completeness_snapshot(workshop_id)
         readiness = _readiness_from_store_or_state(session)
+        stored_cards = (
+            store.list_workshop_cards(workshop_id)
+            if hasattr(store, "list_workshop_cards")
+            else []
+        )
+        reconstruction = next(
+            (
+                card["payload"]["reconstruction"]
+                for card in stored_cards
+                if isinstance(card, dict)
+                and card.get("card_type") == "strategy_reconstruction"
+                and isinstance(card.get("payload"), dict)
+                and isinstance(card["payload"].get("reconstruction"), dict)
+            ),
+            None,
+        )
         projected_cards = _build_workshop_cards(
             session=session,
             events=events,
             snapshot=snapshot,
             readiness=readiness,
-        )
-        stored_cards = (
-            store.list_workshop_cards(workshop_id)
-            if hasattr(store, "list_workshop_cards")
-            else []
+            reconstruction=reconstruction,
         )
         cards = _merge_cards(stored_cards, projected_cards)
         if after_sequence is not None:
@@ -844,6 +1121,7 @@ def build_session_router(
                 exc.status_code, exc.error_code, str(exc), exc.reason,
                 details_extra={"adapter_error_code": exc.adapter_error_code},
             ) from None
+        _publish_completeness(workshop_id, outcome)
         meta = {
             "snapshot_at": utc_now(),
             "capability": "agora.workshop.v1",

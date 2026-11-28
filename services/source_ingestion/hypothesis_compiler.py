@@ -36,6 +36,9 @@ SUPPORT_ADDED = "support_added"
 NOT_EXPRESSIBLE = "not_expressible"
 NEEDS_DATA = "needs_data"
 SKIPPED = "skipped"
+BUDGET_EXHAUSTED = "budget_exhausted"
+ATTEMPTS_DEFERRED = "attempts_deferred"
+ATTEMPTS_EXHAUSTED = "attempts_exhausted"
 
 _DATASET_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
 _PROPOSAL_KEYS = {"outcome", "reason", "dataset", "strategy_logic", "parameters", "mutation_surface"}
@@ -373,19 +376,48 @@ def _pair_defaults(proposal: Mapping[str, Any], card: Mapping[str, Any]) -> tupl
 
 
 class HypothesisCompiler:
-    def __init__(self, proposer: Proposer, store: CompilerStore) -> None:
+    def __init__(
+        self,
+        proposer: Proposer,
+        store: CompilerStore,
+        ledger: Any | None = None,
+    ) -> None:
         self._proposer = proposer
         self._store = store
+        self._ledger = ledger if ledger is not None else getattr(proposer, "ledger", None)
 
     @property
     def store(self) -> CompilerStore:
         return self._store
 
-    def compile(self, card: Mapping[str, Any]) -> CompileOutcome:
-        from services.source_ingestion.hypothesis_card import prediction_missing_dataset, idea_missing_datasets
+    @property
+    def ledger(self) -> Any | None:
+        return self._ledger
+
+    def bind_ledger(self, ledger: Any | None) -> None:
+        self._ledger = ledger
+
+    def compile(
+        self,
+        card: Mapping[str, Any],
+        *,
+        source_id: str = "",
+        digest: str = "",
+    ) -> CompileOutcome:
+        from services.source_ingestion.hypothesis_card import (
+            DAILY_CAP_REACHED,
+            MAX_RECORD_ATTEMPTS_PER_DAY,
+            RECORD_DAILY_LIMIT,
+            RECORD_TOTAL_LIMIT,
+            idea_missing_datasets,
+            prediction_missing_dataset,
+        )
 
         testability = str(card.get("testability") or "")
         key = card_key(card)
+        spans = card.get("cited_spans") or []
+        span_sid = str(spans[0].get("source_record_id") or "") if spans and isinstance(spans[0], Mapping) else ""
+        sid = str(source_id or span_sid or "hypothesis-compiler")
         for prediction in card.get("predictions", ()):
             dataset = prediction_missing_dataset(prediction)
             if dataset:
@@ -419,57 +451,194 @@ class HypothesisCompiler:
                 artifact=draft["artifact"] if draft else None,
                 extra={"cached": True},
             )
+        if self._ledger is not None:
+            reservation = self._ledger.reserve_attempt(sid, digest)
+            if reservation == DAILY_CAP_REACHED:
+                detail = f"daily cap {self._ledger.daily_cap} reached"
+                self._ledger.record(sid, BUDGET_EXHAUSTED, detail)
+                return CompileOutcome(BUDGET_EXHAUSTED, detail)
+            if reservation in (RECORD_DAILY_LIMIT, RECORD_TOTAL_LIMIT):
+                attempts = self._ledger.record_attempts(sid, digest)
+                if reservation == RECORD_DAILY_LIMIT:
+                    detail = f"{MAX_RECORD_ATTEMPTS_PER_DAY} calls today; last: {attempts['last_reason'] or 'unknown'}"
+                    self._ledger.record(sid, ATTEMPTS_DEFERRED, detail)
+                    return CompileOutcome(ATTEMPTS_DEFERRED, detail)
+                detail = f"{attempts['total']} calls; last: {attempts['last_reason'] or 'unknown'}"
+                self._ledger.record(sid, ATTEMPTS_EXHAUSTED, detail)
+                return CompileOutcome(ATTEMPTS_EXHAUSTED, detail)
+        if hasattr(self._proposer, "last_usage"):
+            self._proposer.last_usage = None  # type: ignore[attr-defined]
         try:
             proposal = self._proposer({k: v for k, v in card.items() if k != "predictions"}, catalogue_summary())
         except Exception as exc:
-            return CompileOutcome(SKIPPED, f"proposer_failed:{type(exc).__name__}")
+            usage = getattr(self._proposer, "last_usage", None)
+            failure_code, detail = _classify_proposer_failure(exc)
+            if self._ledger is not None:
+                self._ledger.note_call_failure(sid, digest, failure_code, detail)
+                self._ledger.record(sid, "proposer_failed", detail, usage=usage)
+            return CompileOutcome(SKIPPED, f"proposer_failed:{type(exc).__name__}: {detail}")
+        usage = getattr(self._proposer, "last_usage", None)
+        if isinstance(proposal, Mapping) and "outcome" not in proposal and isinstance(proposal.get("output"), Mapping):
+            out = proposal["output"]
+            if usage is None:
+                usage = _extract_proposer_usage(proposal, out)
+            structured = out.get("structured_data")
+            if isinstance(structured, Mapping):
+                proposal = structured
         kind, reason, dataset, artifact = validate_proposal(proposal, card=card)
         if kind == NEEDS_DATA:
             self._store.count_needs_data(dataset, key)
             self._store.record_outcome(key, NEEDS_DATA, reason, dataset)
+            if self._ledger is not None:
+                self._ledger.record(sid, NEEDS_DATA, f"{dataset}:{reason}" if reason else dataset, usage=usage)
             return CompileOutcome(NEEDS_DATA, reason, dataset=dataset)
         if kind == NOT_EXPRESSIBLE or artifact is None:
             self._store.record_outcome(key, NOT_EXPRESSIBLE, reason)
+            if self._ledger is not None:
+                self._ledger.record(sid, NOT_EXPRESSIBLE, reason, usage=usage)
             return CompileOutcome(NOT_EXPRESSIBLE, reason)
         fp = rule_fingerprint({k: artifact[k] for k in ("screen_fingerprint", "entry_fingerprint")})
         created, support = self._store.add_rule(fp, artifact, key)
         status = COMPILED if created else SUPPORT_ADDED
         self._store.record_outcome(key, status, "", "", fp)
+        if self._ledger is not None:
+            self._ledger.record(sid, status, fp, usage=usage)
         return CompileOutcome(status, fingerprint=fp, support_count=support, artifact=artifact)
 
 
 _PROPOSAL_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
-_PROPOSE_TIMEOUT_SECONDS = 15.0
+
+# Measured proposal answers (UTF-8 bytes and estimate_prompt_tokens = ceil(bytes / 3)):
+# - legacy 3-control factor_rule_v1 proposal (_proposal()): 891 compact bytes (~297 tokens),
+#   1 716 formatted bytes (~572 tokens);
+# - full screen_idea + entry_idea candidate_screen.v1 proposal (hypothesis_screen_entry_recorded.json,
+#   2 inputs, filter+rank screen, 16 parameters, 10 mutation controls, 6 immutable parameters):
+#   2 687 compact bytes (~896 tokens), 4 746 formatted bytes (~1 582 tokens);
+# - all 171 compiled time-series rules in qlib_alpha158.v1.json and alpha101_time_series.v1.json
+#   (with whole_governed_tw_boundary.v1 screen and controls): compact JSON up to 3 711 bytes
+#   (~1 237 tokens, qlib_alpha158:WVMA10/30/60), 4 400 bytes (~1 467 tokens, alpha101:#9) and
+#   6 944 bytes (~2 315 tokens, alpha101:#46).
+# Sizing the proposer output limit from hypothesis_card_token_limits()["max_output_tokens"]
+# (default 3 072, env PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS clamped 1 024..8 192) gives
+# ~1.94x the formatted screen_entry proposal (1 582 tokens), ~3.43x the compact screen_entry
+# proposal (896 tokens), and ~1.33x the largest compact compiled rule across the 171-template
+# library (2 315 tokens).
+MEASURED_PROPOSAL_OUTPUT_TOKENS: dict[str, int] = {
+    "legacy_compact": 297,
+    "legacy_formatted": 572,
+    "screen_entry_compact": 896,
+    "screen_entry_formatted": 1582,
+    "alpha101_max_compact": 2315,
+}
 
 
-def client_proposer(client: Any) -> Proposer:
+def proposer_deadline_seconds(client: Any = None) -> float:
+    """Bounded HYPOTHESIS_CARD deadline used by the proposer turn (client, adapter and gateway)."""
+    from services.source_ingestion.semantic_extraction import hypothesis_card_deadline_seconds
+
+    value = getattr(client, "hypothesis_deadline_seconds", None) if client is not None else None
+    return float(value) if isinstance(value, (int, float)) else hypothesis_card_deadline_seconds()
+
+
+def proposer_max_output_tokens(client: Any = None) -> int:
+    """Bounded HYPOTHESIS_CARD output-token limit sent with the proposer turn."""
+    from services.source_ingestion.semantic_extraction import (
+        ExtractionTaskType,
+        hypothesis_card_token_limits,
+    )
+
+    limits_fn = getattr(client, "token_limits_for", None) if client is not None else None
+    if callable(limits_fn):
+        limits = limits_fn(ExtractionTaskType.HYPOTHESIS_CARD)
+        if isinstance(limits, Mapping) and isinstance(limits.get("max_output_tokens"), int):
+            return int(limits["max_output_tokens"])
+    return int(hypothesis_card_token_limits()["max_output_tokens"])
+
+
+def _extract_proposer_usage(raw: Any, out: Any) -> Optional[dict[str, Optional[int]]]:
+    usage = None
+    if isinstance(raw, Mapping) and isinstance(raw.get("usage"), Mapping):
+        usage = raw["usage"]
+    elif isinstance(out, Mapping) and isinstance(out.get("usage"), Mapping):
+        usage = out["usage"]
+    if not isinstance(usage, Mapping):
+        return None
+    return {key: usage.get(key) for key in ("input_tokens", "output_tokens")}
+
+
+def _classify_proposer_failure(exc: Exception) -> tuple[str, str]:
+    import socket
+
+    from services.source_ingestion.semantic_extraction_client import (
+        SemanticExtractionClientError,
+        is_provider_billing_failure,
+    )
+
+    if isinstance(exc, SemanticExtractionClientError):
+        code = exc.failure_code.value if hasattr(exc.failure_code, "value") else str(exc.failure_code)
+        return code, f"{code}: {exc.message}"
+    err_str = str(exc)
+    if is_provider_billing_failure(err_str):
+        return "provider_billing", f"provider_billing: {err_str}"
+    if (
+        isinstance(exc, (TimeoutError, socket.timeout))
+        or "timed out" in err_str.lower()
+        or "deadline" in err_str.lower()
+    ):
+        return "timeout", f"timeout: {err_str}"
+    return "transport_error", f"transport_error: {type(exc).__name__}: {err_str}"
+
+
+def client_proposer(client: Any, ledger: Any | None = None) -> Proposer:
     """Proposer that asks the governed extraction client's transport for one JSON proposal."""
+    import time
 
     def propose(card: Mapping[str, Any], catalogue: Mapping[str, Any]) -> Mapping[str, Any]:
         from services.source_ingestion.semantic_extraction import (
+            ExtractionFailureCode,
             ExtractionTaskType,
             SemanticExtractionRequest,
         )
+        from services.source_ingestion.semantic_extraction_client import (
+            SemanticExtractionClientError,
+        )
 
+        propose.last_usage = None  # type: ignore[attr-defined]
         spans = card.get("cited_spans") or [{}]
+        first_span = spans[0] if spans and isinstance(spans[0], Mapping) else {}
         request = SemanticExtractionRequest(
-            source_id=str(spans[0].get("source_record_id") or "hypothesis-compiler"),
+            source_id=str(first_span.get("source_record_id") or "hypothesis-compiler"),
             text=str(card.get("claim") or ""),
             task_type=ExtractionTaskType.HYPOTHESIS_CARD,
         )
+        deadline = proposer_deadline_seconds(client)
+        max_output_tokens = proposer_max_output_tokens(client)
+        start_time = time.monotonic()
         raw = client._dispatch_turn(
             prompt=build_compile_prompt(card, catalogue),
             schema=_PROPOSAL_SCHEMA,
             request=request,
-            timeout_seconds=_PROPOSE_TIMEOUT_SECONDS,
+            timeout_seconds=deadline,
+            max_output_tokens=max_output_tokens,
         )
-        out = raw.get("output") or raw.get("data") or raw
+        elapsed = time.monotonic() - start_time
+        out = raw.get("output") or raw.get("data") or raw if isinstance(raw, Mapping) else {}
+        propose.last_usage = _extract_proposer_usage(raw, out)  # type: ignore[attr-defined]
+        if elapsed >= deadline:
+            raise SemanticExtractionClientError(
+                f"Turn deadline of {deadline:.3f}s exhausted during proposer dispatch (took {elapsed * 1000.0:.1f}ms)",
+                ExtractionFailureCode.TIMEOUT,
+                504,
+            )
         structured = out.get("structured_data") if isinstance(out, Mapping) else None
         proposal = structured if isinstance(structured, Mapping) else out
         if not isinstance(proposal, Mapping):
             raise ValueError("compiler proposal is not an object")
         return proposal
 
+    propose.last_usage = None  # type: ignore[attr-defined]
+    propose.ledger = ledger  # type: ignore[attr-defined]
+    propose.client = client  # type: ignore[attr-defined]
     return propose
 
 
@@ -484,7 +653,9 @@ def compiler_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 
 def compiler_from_env(
-    client: Any | None = None, store_path: str | Path | None = None
+    client: Any | None = None,
+    store_path: str | Path | None = None,
+    ledger: Any | None = None,
 ) -> Optional[HypothesisCompiler]:
     """Build the compiler only when L2 extraction is enabled (same switch as the extractor)."""
     if not compiler_enabled():
@@ -493,19 +664,25 @@ def compiler_from_env(
         from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
 
         client = SemanticExtractionClient()
-    return HypothesisCompiler(client_proposer(client), CompilerStore(store_path))
+    return HypothesisCompiler(client_proposer(client, ledger=ledger), CompilerStore(store_path), ledger=ledger)
 
 
 __all__ = [
+    "ATTEMPTS_DEFERRED",
+    "ATTEMPTS_EXHAUSTED",
+    "BUDGET_EXHAUSTED",
     "CompileOutcome",
     "CompilerStore",
     "HypothesisCompiler",
+    "MEASURED_PROPOSAL_OUTPUT_TOKENS",
     "build_compile_prompt",
     "client_proposer",
     "compiler_enabled",
     "compiler_from_env",
     "card_key",
     "catalogue_summary",
+    "proposer_deadline_seconds",
+    "proposer_max_output_tokens",
     "rule_fingerprint",
     "validate_proposal",
 ]

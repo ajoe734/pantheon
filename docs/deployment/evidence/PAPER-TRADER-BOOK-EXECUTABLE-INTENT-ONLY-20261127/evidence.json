@@ -1,0 +1,279 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127",
+  "title": "Trader paper book has no paper worker; it must run trader intents only",
+  "status": "ready_for_review",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "review_independence": {
+    "owner_family": "antigravity",
+    "reviewer_family": "codex",
+    "cross_family_verified": true
+  },
+  "problem_register_ref": {
+    "file": "docs/operations/problem-register.md",
+    "section": "RC4. Nobody looks at the whole design",
+    "row": "Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T7/T8 follow-up)"
+  },
+  "root_cause": {
+    "desired_state_exclusion": "services/control-plane/bff/personas/trader_paper_book.py::ensure_trader_paper_book coordinated Registry/Governance/Deployment authorities when configured but deployed the RuntimeBinding to Runtime-Manager without attaching the approved artifact execution projection (object_store, artifact_checksum, symbol, market_data_policy) produced by StagePlanner.build_execution_projection. As a result, services/runtime-manager/fleet_desired_state.py::_execution_projection_exclusion_reason excluded rb-77d962be4e324032808324109f2c154e with exclusion_reason='non_executable_missing_artifact_store' and paper-fleet-reconciler spawned no paper_runtime.py worker for rt-persona-paper-3ca8da543bef6ede0a07.",
+    "strategy_signal_isolation": "Once a trader servant paper book RuntimeBinding carries the approved artifact execution projection so desired-state admits it and paper-fleet-reconciler runs its worker subprocess, paper-signal-producer must not evaluate the bootstrap close_to_close_momentum StrategyArtifact on that binding; a trader servant paper book executes only trader-confirmed paper intents enqueued by the T8 consumer (source_worker == 'paper-signal-producer.agora-intent')."
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "summary": "Added PersonaProvisioningCoordinator.build_paper_execution_projection_metadata(record, ids, deployment_plan_receipt=..., registry_receipt=...) reusing StagePlanner().build_execution_projection(plan_obj, entry), validate_strategy_artifact, strategy_artifact_checksum, and strategy_artifact_minimum_closes (the exact projection path used by DeploymentService.create_plan). Requires real validated Registry and DeploymentPlan owner receipts via self._validate_registry(..., state='approved') and DeploymentPlan.from_dict(deployment_plan_receipt).validate(), failing closed on absent, incomplete, or unapproved receipts with zero synthesized approvals or defaulted authority fields."
+    },
+    {
+      "path": "services/control-plane/bff/personas/trader_paper_book.py",
+      "summary": "Updated ensure_trader_paper_book to resolve the approved artifact projection from real Registry and Deployment owner receipts (failing closed with reason_code='deploy_authorities_unavailable' when Registry/Governance/Deployment owners are unconfigured or when receipts are absent/unapproved), attach the StagePlanner.build_execution_projection metadata on new RuntimeBinding creation, and repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Preserved the P-4 paper risk policy gate in _transport_supports_paper_risk_gate independently of drafter/proposer availability whenever Capital and Governance owners are configured (accepting an existing valid approved capital_pool_activation mapping without a drafter, and otherwise failing closed before any RuntimeBinding deploy or transition when drafting or approval cannot resolve). Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
+    },
+    {
+      "path": "services/execution/lean_runtime/paper_signal_producer.py",
+      "summary": "Added TRADER_SERVANT_PAPER_BOOK_KIND = 'trader_servant_paper_book' and _is_trader_servant_paper_book_binding(binding), gating PaperSignalProducer.settle_pending_intraday, PaperSignalProducer.produce, and PaperSignalProducer._produce_current so paper-signal-producer neither settles/releases pre-existing parked strategy decisions nor generates current strategy decisions or signals for trader servant paper book bindings while leaving the three trading personas' pending_settlement and settle_pending_intraday next-open release untouched."
+    },
+    {
+      "path": "services/runtime-manager/fleet_desired_state.py",
+      "summary": "Unchanged (zero exemption list added); trader servant paper book bindings pass _execution_projection_exclusion_reason via the standard StagePlanner.build_execution_projection metadata."
+    },
+    {
+      "path": "services/runtime-manager/test_fleet_desired_state.py",
+      "summary": "Added test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings proving AC1."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py",
+      "summary": "Wired owner_stack with real authority receipts for Registry/Governance/Deployment and added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1), test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2), test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding (P1 regression), test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions (P1 regression), and test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_deploy_or_repair_transitions (P1 / AC1 regression)."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
+      "summary": "Wired servant_paper_world with Registry and Deployment authority endpoints backed by real Governance approval decisions so ensure_trader_paper_book resolves real approved authority receipts, and added test_p4_risk_policy_gate_enforced_without_drafter_and_replays_existing_approved_mapping proving configured-owner P-4 validation independently of drafter/proposer availability (new-book and in-place-repair fail closed with zero deploy/transition calls on unresolved mapping; existing approved mapping replays and repairs in place without a drafter)."
+    },
+    {
+      "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
+      "summary": "Added TestTraderServantPaperBookIntentOnlyAndPersonaSettlement covering AC3 (zero strategy decisions and zero strategy signals on an executable trader book binding, plus test_preseeded_parked_strategy_decision_is_not_settled_or_released_for_trader_servant_paper_book proving a preseeded pending_settlement strategy record is neither settled nor released on D+1 open once metadata.book_kind == 'trader_servant_paper_book', while preserving T8 paper-signal-producer.agora-intent signals) and AC4 (the three trading personas' pending_settlement parking and settle_pending_intraday D+1 open release unchanged)."
+    },
+    {
+      "path": "docs/operations/problem-register.md",
+      "summary": "Recorded PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 (owner Antigravity, cross-family reviewer Codex) in the RC4 Agora servant row and attached the two AC5 storage residuals (unbounded public.telemetry_heartbeat_hourly_summaries retention and uncompacted closed instrument_positions / execution_prices / settled_futures_contracts in the per-binding performance ledger JSON) to RC3 WP3.1."
+    }
+  ],
+  "acceptance_criteria": {
+    "AC1_desired_state_lists_trader_book_via_standard_projection": {
+      "status": "verified_by_unit_and_integration_tests",
+      "tests": [
+        "services/runtime-manager/test_fleet_desired_state.py::TestStability::test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_deploy_or_repair_transitions"
+      ],
+      "no_exemption_in_fleet_desired_state": true
+    },
+    "AC2_existing_hosted_book_repaired_in_place_on_same_binding_id": {
+      "status": "verified_by_integration_test",
+      "hosted_identities": {
+        "persona_id": "agora-servant-799a3ce8c021b91cbb54",
+        "capital_pool_id": "pool-persona-paper-3ca8da543bef6ede0a07",
+        "persona_capital_binding_id": "pcb-persona-paper-3ca8da543bef6ede0a07",
+        "runtime_binding_id": "rb-77d962be4e324032808324109f2c154e",
+        "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07"
+      },
+      "tests": [
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions",
+        "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_p4_risk_policy_gate_enforced_without_drafter_and_replays_existing_approved_mapping"
+      ]
+    },
+    "AC3_zero_strategy_decisions_or_signals_for_trader_servant_paper_book": {
+      "status": "verified_by_unit_test",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestTraderServantPaperBookIntentOnlyAndPersonaSettlement::test_executable_trader_servant_paper_book_binding_emits_zero_strategy_decisions_and_signals",
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestTraderServantPaperBookIntentOnlyAndPersonaSettlement::test_preseeded_parked_strategy_decision_is_not_settled_or_released_for_trader_servant_paper_book"
+      ]
+    },
+    "AC4_three_trading_personas_and_settle_pending_intraday_unchanged": {
+      "status": "verified_by_unit_test",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestTraderServantPaperBookIntentOnlyAndPersonaSettlement::test_three_trading_personas_park_pending_settlement_and_settle_pending_intraday_on_next_open_unchanged"
+      ]
+    },
+    "AC5_runtime_budget": {
+      "paper_worker_subprocess_memory": {
+        "added_workers_at_hosted_scale": 1,
+        "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07",
+        "binding_id": "rb-77d962be4e324032808324109f2c154e",
+        "measurement_method": "Spawned PaperFleetReconciler parent process plus 4 real PaperRuntimeService subprocesses (rt-49c1c3d1 + 3 trading personas qinghe, hengyue, chengchuan) and then added the 5th subprocess for rb-77d962be4e324032808324109f2c154e (rt-persona-paper-3ca8da543bef6ede0a07), reading VmHWM (peak RSS) and VmRSS from /proc/<pid>/status after draining heartbeat/fill cycles and persisting ledger + outbox state.",
+        "measured_at_utc": "2026-11-27T18:35:04Z",
+        "measurement_command": ".venv-pantheon/bin/python3 -c '<spawn PaperFleetReconciler + 4 baseline PaperRuntimeService worker subprocesses + 5th trader paper book worker subprocess rb-77d962be4e324032808324109f2c154e; read /proc/<pid>/status VmHWM/VmRSS and stat ledger/outbox files>'",
+        "raw_observation": {
+          "measured_at_utc": "2026-11-27T18:35:04Z",
+          "reconciler_parent_process": {
+            "pid": 1003,
+            "vm_hwm_kib": 54036,
+            "vm_hwm_mib": 52.77,
+            "vm_rss_kib": 54036,
+            "vm_rss_mib": 52.77
+          },
+          "four_baseline_workers": [
+            {
+              "binding_id": "rb-49c1c3d1000000000000000000000000",
+              "runtime_id": "rt-49c1c3d1",
+              "pid": 1004,
+              "vm_hwm_kib": 54912,
+              "vm_hwm_mib": 53.62,
+              "vm_rss_kib": 54912,
+              "vm_rss_mib": 53.62
+            },
+            {
+              "binding_id": "rb-persona-paper-qinghe-001",
+              "runtime_id": "rt-persona-paper-qinghe",
+              "pid": 1005,
+              "vm_hwm_kib": 55304,
+              "vm_hwm_mib": 54.01,
+              "vm_rss_kib": 55304,
+              "vm_rss_mib": 54.01
+            },
+            {
+              "binding_id": "rb-persona-paper-hengyue-001",
+              "runtime_id": "rt-persona-paper-hengyue",
+              "pid": 1006,
+              "vm_hwm_kib": 55204,
+              "vm_hwm_mib": 53.91,
+              "vm_rss_kib": 55204,
+              "vm_rss_mib": 53.91
+            },
+            {
+              "binding_id": "rb-persona-paper-chengchuan-001",
+              "runtime_id": "rt-persona-paper-chengchuan",
+              "pid": 1007,
+              "vm_hwm_kib": 54840,
+              "vm_hwm_mib": 53.55,
+              "vm_rss_kib": 54840,
+              "vm_rss_mib": 53.55
+            }
+          ],
+          "fifth_trader_book_worker": {
+            "binding_id": "rb-77d962be4e324032808324109f2c154e",
+            "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07",
+            "pid": 1008,
+            "vm_hwm_kib": 55068,
+            "vm_hwm_mib": 53.78,
+            "vm_rss_kib": 55068,
+            "vm_rss_mib": 53.78
+          },
+          "totals": {
+            "four_workers_plus_reconciler_vm_hwm_kib": 274292,
+            "four_workers_plus_reconciler_vm_hwm_mib": 267.86,
+            "four_workers_plus_reconciler_vm_rss_kib": 274292,
+            "four_workers_plus_reconciler_vm_rss_mib": 267.86,
+            "five_workers_plus_reconciler_vm_hwm_kib": 329364,
+            "five_workers_plus_reconciler_vm_hwm_mib": 321.64,
+            "five_workers_plus_reconciler_vm_rss_kib": 329364,
+            "five_workers_plus_reconciler_vm_rss_mib": 321.64,
+            "added_fifth_worker_vm_hwm_kib": 55068,
+            "added_fifth_worker_vm_hwm_mib": 53.78,
+            "added_fifth_worker_vm_rss_kib": 55068,
+            "added_fifth_worker_vm_rss_mib": 53.78
+          }
+        },
+        "comparison_with_hosted_cgroup_limit": "Measured 4-worker + reconciler process VmHWM sum is 267.86 MiB (hosted cgroup baseline in docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117/evidence.json:14 is 253 MiB anon + 382 MiB page cache = 640 MiB cgroup peak). Adding the 5th worker adds 53.78 MiB VmHWM (321.64 MiB total process VmHWM; ~694 MiB projected cgroup peak including the 382 MiB page cache), leaving ~586 MiB headroom below the 1280 MiB container memory cap (DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m in docker-compose.yml:2981).",
+        "cleanup": "PaperFleetReconciler._terminate_worker (services/paper_fleet_reconciler/paper_fleet_reconciler.py:1218-1277) terminates the worker subprocess on binding pause, retirement, or desired-state exclusion (SIGTERM followed by SIGKILL after RECONCILER_DRAIN_TIMEOUT_SECONDS=10s)."
+      },
+      "telemetry_heartbeat_and_summary_rows_per_day": {
+        "heartbeat_cadence_seconds": 15,
+        "code_references": [
+          "services/execution/lean_runtime/paper_runtime.py:210 (STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0)",
+          "services/execution/lean_runtime/paper_runtime.py:7780-7790 (poll_interval_seconds / heartbeat emission)",
+          "services/telemetry/heartbeat_retention.py:7-11, 39-78 (DEFAULT_RAW_RETENTION_DAYS = 3, DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS = 3, DEFAULT_INFRA_HEALTH_RETENTION_DAYS = 7, DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS = 14, DEFAULT_INTERVAL_SECONDS = 300.0, DEFAULT_BATCH_SIZE = 5000, DEFAULT_MAX_BATCHES_PER_RUN = 20; summary rows in public.telemetry_heartbeat_hourly_summaries are permanent and never deleted)",
+          "docs/operations/storage-manifest.json (public.telemetry_events bound_status='bounded'; public.telemetry_heartbeat_hourly_summaries bound_status='unreviewed', cap='none verified in code', cleanup='none found by the static inventory', register_class='RC3')",
+          "scripts/measure_hosted_storage.py:44-45 (BUDGETS['public.telemetry_events'] = {'max_bytes': 5 GB, 'max_growth_per_day': 100 MB})"
+        ],
+        "raw_heartbeat_rows_per_day_for_one_more_runtime": 5760,
+        "raw_heartbeat_bytes_per_day": "~2.0-2.8 MB/day (~350-500 B/row in public.telemetry_events before 3-day rollup/deletion)",
+        "runtime_state_snapshot_rows_per_day_for_one_more_runtime": "<= 100 rows/day (startup + structural changes + STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0/hour = <= 96 MTM snapshots/day)",
+        "hourly_summary_rows_per_day_for_one_more_runtime": "24 rows/day in public.telemetry_heartbeat_hourly_summaries (1 row per (runtime_id, hour_bucket) via ON CONFLICT DO UPDATE; ~400 B/row = ~9.6 KB/day = ~3.5 MB/year for 1 additional runtime)",
+        "hourly_summary_retention_and_cap": "None verified in code: services/telemetry/heartbeat_retention.py:11 explicitly states that summary rows in public.telemetry_heartbeat_hourly_summaries are permanent and never deleted, and docs/operations/storage-manifest.json records public.telemetry_heartbeat_hourly_summaries (and telemetry_heartbeat_hourly_summaries) with bound_status='unreviewed', cap='none verified in code', cleanup='none found by the static inventory' under register_class='RC3' ('to_be_opened: RC3 WP3.1 remaining writers'). Documented in residual_findings below and attached to RC3 WP3.1.",
+        "telemetry_events_retention_and_cap": "HeartbeatRetentionJob (services/telemetry/heartbeat_retention.py, running every 300s in services/telemetry/main.py with <=20 batches x 5000 rows per event class) rolls up and deletes raw heartbeat rows older than PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS=3 days (capping steady-state raw heartbeat rows for one runtime at 3 x 5760 = 17,280 rows), deletes runtime_state_snapshot rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS=3 days (preserving newest/oldest per runtime and unknown-valuation anchors), and deletes unreferenced non-permanent public.telemetry_events rows older than PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 days, keeping public.telemetry_events within its 5 GB / <=100 MB/day cap in scripts/measure_hosted_storage.py."
+      },
+      "per_binding_performance_ledger_file": {
+        "path_pattern": "${PANTHEON_PERFORMANCE_STATE_ROOT}/rb-77d962be4e324032808324109f2c154e-5e5f919861b9.json (plus sibling rb-77d962be4e324032808324109f2c154e-5e5f919861b9.json.lifecycle-outbox.json)",
+        "code_references": [
+          "services/paper_fleet_reconciler/paper_fleet_reconciler.py:463-482 (_binding_state_filename)",
+          "services/execution/lean_runtime/paper_runtime.py:130 (_LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS = 35 * 24 * 3600.0)",
+          "services/execution/lean_runtime/paper_runtime.py:4647-4650, 4850, 4998-5014, 6098-6122 (closing equity/futures positions or settling expiring futures sets quantity=0.0, status='closed' in _instrument_positions and appends settle_key to _settled_futures_contracts without evicting closed entries)",
+          "services/execution/lean_runtime/paper_runtime.py:6165-6166, 4681-4682 (self._ledger_fill_history = self._ledger_fill_history[-256:], RAM-only, not persisted in ledger JSON)",
+          "services/execution/lean_runtime/paper_runtime.py:6481-6487, 6506-6575 (PaperExecutionAlgorithm._load_state and _persist_state)",
+          "services/execution/lean_runtime/paper_runtime.py:6697-6714 (ack_fill_publication drains pending_fill_publications)",
+          "services/execution/lean_runtime/paper_runtime.py:6781-6795 (ack_performance_pair clears pending_performance_pair)",
+          "services/execution/lean_runtime/paper_runtime.py:7313-7360 (LifecycleTelemetryOutbox._chain_retention_seconds and _prune_expired_chains)",
+          "services/foundation/reliable_delivery.py:29-72 (atomic_write_text and sweep_stale_temp_siblings)",
+          "services/paper_fleet_reconciler/paper_fleet_reconciler.py:1299-1425 (PaperFleetReconciler._cleanup_retired_state_files)"
+        ],
+        "write_cadence": "Atomic in-place snapshot rewrite via atomic_write_text (single deterministic <path>.tmp sibling; sweep_stale_temp_siblings on startup) on fill commit, mark valuation update, futures expiry settlement, or performance pair stage/ack (0 writes/day when idle with no trader intents).",
+        "measured_file_sizes_bytes": {
+          "idle_ledger_bytes": 674,
+          "open_1_symbol_ledger_bytes": 1312,
+          "fill_ledger_bytes_with_pending_publication": 1331,
+          "acked_ledger_bytes_with_open_2330_position": 1331,
+          "closed_1_symbol_ledger_bytes_retaining_closed_position_and_execution_price": 1254,
+          "retraded_and_closed_same_symbol_ledger_bytes": 1255,
+          "closed_10_distinct_symbols_ledger_bytes": 6035,
+          "measured_bytes_per_additional_closed_distinct_equity_symbol": 531.22,
+          "closed_10_distinct_symbols_plus_3_settled_futures_contracts_bytes": 6216,
+          "measured_bytes_per_settled_futures_contract_key": 60.33,
+          "idle_outbox_bytes": 110,
+          "outbox_35d_35_chains_bytes": 26953,
+          "pruned_chains_older_than_35d": 5
+        },
+        "size_growth_and_cap_analysis": "PaperExecutionAlgorithm._persist_state (paper_runtime.py:6506-6575) rewrites the per-binding ledger file in place via atomic_write_text. While holdings (6528-6532) and open_episodes (6533-6545) filter to currently non-zero positions (abs(quantity) > 1e-12), pending_performance_pair (6526) holds at most 1 dict cleared on ack_performance_pair (6781-6795), pending_fill_publications (6527) is drained to [] on ack_fill_publication (6697-6714), and _ledger_fill_history (4681-4682, 6165-6166) is a 256-entry RAM-only ring buffer not written to disk, the ledger JSON has NO coded cardinality cap or post-close eviction for three persisted collections: (1) execution_prices (6546-6550, restored into self.Securities at 6483-6487) retains every symbol/instrument ever priced with a finite positive price; (2) instrument_positions (6551-6557) retains every (persona_binding_id, normalised_underlying, instrument_id) record ever traded because closing an equity/futures position (6119-6122, 4647-4650, 4850) or settling an expiring futures contract (4998-5006) sets quantity=0.0 and status='closed' without deleting the entry; and (3) settled_futures_contracts (6565, added at 5014 and restored at 6481) retains every settled f'{b_id}:{inst_id}:{month}' contract key. Measured ledger size is 674 B idle, 1,312-1,331 B with 1 open 2330.TW position, and 1,254 B after closing 2330.TW (holdings=0, execution_prices=1, instrument_positions=1 with status='closed'). Re-trading and closing an already-traded instrument updates its existing entry in place (1,255 B, ~0 B net growth), whereas each newly traded distinct equity instrument adds 531.22 B (measured 6,035 B across 10 closed distinct symbols) and each settled futures contract month adds 60.33 B (measured 6,216 B with 3 settled futures contract keys). For the trader servant paper book (0 strategy signals/day; T8 daily cap of 50 paper intents/day per SD_AGORA_SERVANT_CORE_2026-11-27.md §8.3), daily ledger growth is 0 B/day when idle or trading already-seen instruments, ~0-2.7 KB/day for typical trader usage (0-5 new distinct instruments/day), and <= 26.6 KB/day worst case if all 50 daily intents traded brand-new distinct instruments never traded before on the book (bounded only by the finite universe of ~2,000-2,600 listed Taiwan equities -> ~1.06-1.38 MB plus ~60 B per settled futures contract month, with no hardcoded entry cap in paper_runtime.py). The sibling LifecycleTelemetryOutbox (.lifecycle-outbox.json) IS time-window bounded by _prune_expired_chains (paper_runtime.py:7322-7348), which prunes any journey with no pending events whose last correlation_envelope.event_time is older than _chain_retention_seconds() (default _LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS = 35 days at paper_runtime.py:130; measured 110 B idle, 26,953 B across 35 retained journey checkpoints = ~767 B/chain, capped at <= ~1.34 MB steady state under the T8 cap of 50 intents/day x 35 days = <=1,750 chains).",
+        "cleanup": "No in-life compaction or eviction of closed instrument_positions, execution_prices, or settled_futures_contracts entries exists in paper_runtime.py (documented in residual_findings below and attached to RC3 WP3.1). Whole-file deletion occurs on binding retirement when PaperFleetReconciler._cleanup_retired_state_files (services/paper_fleet_reconciler/paper_fleet_reconciler.py:1299-1425) unlinks the per-binding ledger file, .lifecycle-outbox.json, .member-books.json, .lock, and any .tmp siblings once the binding is retired in Runtime-Manager, not in desired-state, has no live worker, and its pending fill publications, pending performance pair, and outbox pending list are empty."
+      }
+    },
+    "AC6_hosted_proof_after_deploy": {
+      "status": "pending_post_merge_dev_deploy",
+      "coordinator": "70b5f70f",
+      "read_only_checks": [
+        "GET /api/runtime-fleet/desired-state?stage=paper lists rb-77d962be4e324032808324109f2c154e in bindings and not in excluded",
+        "paper-fleet-reconciler runs exactly one worker subprocess for rb-77d962be4e324032808324109f2c154e (rt-persona-paper-3ca8da543bef6ede0a07)",
+        "GET /api/v1/telemetry/rt-persona-paper-3ca8da543bef6ede0a07/summary returns HTTP 200",
+        "Over one trading session paper-signal-producer emits zero strategy signals for rb-77d962be4e324032808324109f2c154e",
+        "GET /bff/agora/servant/paper-book returns pool-persona-paper-3ca8da543bef6ede0a07, pcb-persona-paper-3ca8da543bef6ede0a07, rb-77d962be4e324032808324109f2c154e, rt-persona-paper-3ca8da543bef6ede0a07"
+      ]
+    },
+    "AC7_problem_register_and_review_independence": {
+      "status": "verified",
+      "problem_register_updated": true,
+      "owner": "Antigravity",
+      "reviewer": "Codex"
+    }
+  },
+  "residual_findings": [
+    {
+      "id": "RESIDUAL-TELEMETRY-HOURLY-SUMMARY-NO-RETENTION-CAP",
+      "register_class": "RC3",
+      "work_package": "WP3.1",
+      "owning_domain": "Remediation mechanisms / telemetry storage (f4c32790)",
+      "manifest_ref": "docs/operations/storage-manifest.json::public.telemetry_heartbeat_hourly_summaries",
+      "code_references": [
+        "services/telemetry/heartbeat_retention.py:7-11",
+        "services/telemetry/heartbeat_retention.py:54"
+      ],
+      "description": "public.telemetry_heartbeat_hourly_summaries has no retention window, row/byte cap, or cleanup in code (services/telemetry/heartbeat_retention.py:11 states summary rows are permanent and never deleted; storage-manifest.json records bound_status='unreviewed', cap='none verified in code', cleanup='none found by the static inventory'). Adding the trader servant paper book worker adds 24 rows/day (~9.6 KB/day, ~3.5 MB/year) for rt-persona-paper-3ca8da543bef6ede0a07.",
+      "disposition": "Attached to existing RC3 WP3.1 entry in docs/operations/storage-manifest.json and docs/operations/problem-register.md ('to_be_opened: RC3 WP3.1 remaining writers')."
+    },
+    {
+      "id": "RESIDUAL-PAPER-LEDGER-CLOSED-POSITIONS-AND-SETTLED-CONTRACTS-UNCOMPACTED",
+      "register_class": "RC3",
+      "work_package": "WP3.1",
+      "owning_domain": "Persona loop going live / paper execution (77b586b6) & Remediation mechanisms / storage (f4c32790)",
+      "code_references": [
+        "services/execution/lean_runtime/paper_runtime.py:4647-4650",
+        "services/execution/lean_runtime/paper_runtime.py:4850",
+        "services/execution/lean_runtime/paper_runtime.py:4998-5014",
+        "services/execution/lean_runtime/paper_runtime.py:6098-6122",
+        "services/execution/lean_runtime/paper_runtime.py:6481-6487",
+        "services/execution/lean_runtime/paper_runtime.py:6546-6565"
+      ],
+      "description": "PaperExecutionAlgorithm._persist_state rewrites the per-binding performance ledger JSON (${PANTHEON_PERFORMANCE_STATE_ROOT}/<binding>-<hash>.json) in place, but retains closed position records (quantity=0.0, status='closed') in instrument_positions, all ever-priced symbols in execution_prices (+531.22 B measured per distinct equity instrument ever traded), and all expired settled futures contract keys in settled_futures_contracts (+60.33 B measured per settled contract month) with no coded cardinality bound or post-close eviction until the binding is retired and PaperFleetReconciler._cleanup_retired_state_files unlinks the file.",
+      "disposition": "Attached to existing RC3 WP3.1 paper runtime state files / remaining writers ownership in docs/operations/problem-register.md."
+    }
+  ]
+}

@@ -320,6 +320,8 @@ def _first(*values: Any) -> Any:
 
 def _stage_status(value: Any) -> str:
     token = str(value or "unknown").strip().lower()
+    if token == "expired_no_price":
+        return "expired"
     if token in {"ok", "accepted", "submitted", "filled", "resolved", "complete", "completed", "succeeded"}:
         return "succeeded"
     if token in {"partial", "partially_filled", "partially_succeeded"}:
@@ -1256,6 +1258,10 @@ class RelationalLifecycleProjector:
                 )
                 if decision_reason is not None:
                     event["reason_code"] = str(decision_reason)
+            if source.get("event_type") == "trade_decision":
+                for field in ("decision_status", "decision_day", "target_day", "expires_at", "execution_target_bar_start"):
+                    if metadata.get(field) is not None:
+                        event[field] = metadata[field]
             if source.get("event_type") == FIXTURE_EVENT_TYPE:
                 for field in FIXTURE_PASSTHROUGH_FIELDS:
                     value = fixture_payload.get(field)
