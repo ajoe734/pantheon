@@ -8378,7 +8378,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     validate_required_loop_workers
     # Capture before any pre-rollout recreation (including bootstrap postgres
     # and the issuer). Compensation must use the images running before deploy,
-    # never the candidate image that start_dev_paper_principal_issuer installs.
+    # never the candidate image installed by issuer startup below.
     DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
     capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
       || rollback_dev_bff_on_failure "steady_service_baseline"

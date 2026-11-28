@@ -64,8 +64,7 @@ elif args[0] == "compose" and "config" in args:
         print(os.environ["CONFIG_STDERR"], file=sys.stderr)
     if os.environ.get("CONFIG_EXIT"):
         sys.exit(int(os.environ["CONFIG_EXIT"]))
-    names = [r["service"] for r in rows]
-    names += os.environ.get("EXPECTED_STEADY_FOR_TEST", "").split()
+    names = os.environ.get("EXPECTED_STEADY_FOR_TEST", "").split()
     print(json.dumps({{"services": {{n: {{"restart": "unless-stopped", **(
         {{}} if os.environ.get("CONFIG_NO_IMAGE") else {{"image": "pantheon-" + n + ":t"}})}} for n in names}}}}))
 elif args[0] == "compose" and "ps" in args:
