@@ -1,0 +1,31 @@
+{
+  "task_id": "CI-RISK-BINDING-TEST-CLOCK-20261128",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "stage": "functional validation in progress; anchor evidence",
+  "scope": [
+    "acceptance/test_paper_risk_policy_binding.py",
+    "docs/deployment/evidence/CI-RISK-BINDING-TEST-CLOCK-20261128/evidence.json"
+  ],
+  "baseline": {
+    "clock": "2026-12-01T00:00:01Z",
+    "exit_code": 1,
+    "result": "3 failed, 74 passed",
+    "output": ".....................................FF........F........................ [ 93%]\n.....                                                                    [100%]\n=================================== FAILURES ===================================\nE   assert 1 == 0\n     +  where 1 = <function main at 0x79dffe213c40>()\n     +    where <function main at 0x79dffe213c40> = probe.main\n/tmp/pantheon-worker-worktrees/pantheon/ci-risk-binding-test-clock-20261128/acceptance/test_paper_risk_policy_binding.py:250: assert 1 == 0\nE   assert 1 == 0\n     +  where 1 = <function main at 0x79dffe213c40>()\n     +    where <function main at 0x79dffe213c40> = probe.main\n/tmp/pantheon-worker-worktrees/pantheon/ci-risk-binding-test-clock-20261128/acceptance/test_paper_risk_policy_binding.py:286: assert 1 == 0\nE   assert 1 == 0\n     +  where 1 = <function main at 0x79dffe213c40>()\n     +    where <function main at 0x79dffe213c40> = probe.main\n/tmp/pantheon-worker-worktrees/pantheon/ci-risk-binding-test-clock-20261128/acceptance/test_paper_risk_policy_binding.py:357: assert 1 == 0\n=========================== short test summary info ============================\nFAILED acceptance/test_paper_risk_policy_binding.py::test_http_main_uses_policy_reader_only_for_approval_get\nFAILED acceptance/test_paper_risk_policy_binding.py::test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token\nFAILED acceptance/test_paper_risk_policy_binding.py::test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads\n3 failed, 74 passed in 1.88s\n"
+  },
+  "initial_verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_paper_risk_policy_binding.py",
+    "exit_code": 0,
+    "result": "80 passed"
+  },
+  "implementation": "Monkeypatch probe.datetime to a datetime subclass returning module NOW in each of the three CLI tests; parameterized regression reuses their full row shapes and assertions under an expired outer clock and checks actual report passed/observed_at.",
+  "runtime_budget": {
+    "cadence": "no new recurring activity",
+    "hosted_size_bytes": 0,
+    "hosted_count": 0,
+    "growth_bytes_per_day": 0,
+    "cap_bytes": 0,
+    "cleanup": "no new runtime file, writer, job or workflow input; only static versioned task evidence"
+  },
+  "hosted_verification": "Not performed; operator acceptance task owns hosted verification. No VM/SSH or operator key access."
+}
