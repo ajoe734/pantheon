@@ -161,11 +161,12 @@
   },
   "claude2_resumption_20261128": {
     "reason": "Human/Ops reopened after discovery repair #8036 and assigned healthy cross-family reviewer Claude2; no implementation changes in this resumption.",
-    "base_commit": "538dc897d6b895460870fb20f576b11a7fc4a0e8",
-    "merge_commit": "8ca68404d13dca1a397d0b49ee1e1504ba456849",
+    "base_commit": "18e8cca537b9fffe49da6f14da439799398bc060",
+    "merge_commit": "f73a653338b6eaa26b008b68cdd6387bdad03f0e",
+    "base_refresh": "Initial synchronization to 538dc897d passed the same 165 tests in 58.91s. While CI ran, dev merged independent trading-pulse repair #8043; refreshed base and reran before exact-head handoff. No task implementation change.",
     "reviewer": "Claude2",
     "validation_command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same DSN> .venv-pantheon/bin/python -m pytest -q --tb=short --disable-warnings [same 11 targets as review_rehandoff_20261128.validation_command] acceptance/test_discovery_pipeline_day.py services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
-    "validation_result": "exit 0; 165 passed, 0 skipped, 3 warnings in 58.91s; subprocess timeout 210s, outer timeout 240s; isolated PostgreSQL cleanup collected before terminal exit",
+    "validation_result": "exit 0; 165 passed, 0 skipped, 3 warnings in 59.21s; subprocess timeout 210s, outer timeout 240s; isolated PostgreSQL cleanup collected before terminal exit",
     "other_checks": "Python distribution provision passed; git diff --check and diff budget passed; discovery and capacity repair files match dev exactly.",
     "fixture_preservation": "recorded_hosted_bodies and source_sha256 remain unchanged from previous head a4e87f1b41d67b82f7d2eef5aa0c1f98f8eee7cc",
     "residual_findings": "Previous discovery and capacity failures routed to owning tasks and composed from merged dev; no new outside-scope findings. Hosted deployment and acceptance remain pending."
