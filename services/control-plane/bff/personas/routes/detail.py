@@ -21,6 +21,7 @@ from ..service import (
     _list_governance_audit_events,
     _merged_skill_records,
     _merged_tool_records,
+    _persona_fleet_record_visible_to,
     _persona_provisioning_store,
     _persona_record_for_provisioning,
     _project_persona_dto,
@@ -32,6 +33,7 @@ from ..service import (
     build_persona_runtime_profile,
     deterministic_provisioning_ids,
 )
+from .collection import _fleet_viewer_user_id
 from .common import PersonaRouteContext, make_context_dependency
 
 log = logging.getLogger(__name__)
@@ -582,6 +584,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             )
             if not raw:
                 _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=snapshot_at), label="Persona")
+                raise _bff_error(
+                    404, ErrorCode.RESOURCE_NOT_FOUND,
+                    "Persona not found",
+                    f"Persona {persona_id} does not exist",
+                )
+            if not _persona_fleet_record_visible_to(
+                raw, _fleet_viewer_user_id(identity, caller_tenant, utc_now)
+            ):
                 raise _bff_error(
                     404, ErrorCode.RESOURCE_NOT_FOUND,
                     "Persona not found",

@@ -302,6 +302,9 @@ def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_pag
                    persona_id="agora-servant-799a3ce8c021b91cbb54",
                    lifecycle_state="paper_owner")
     servant["metadata"]["owner_scope"] = "user_private"
+    # This test exercises the owner's unchanged row set; non-owner visibility
+    # is covered by test_persona_list_private_visibility.py.
+    servant["metadata"]["agora_user_id"] = "op-1"
     other_traders = []
     for pid in ("persona-2448c7053e33ea48da47", "persona-6507750312870d03a241"):
         trader = copy.deepcopy(RECORDED_LIVE_PAPER_OWNER)
