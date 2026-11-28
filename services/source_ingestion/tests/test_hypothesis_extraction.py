@@ -47,7 +47,7 @@ def _card(text: str = BODY, span: str = CLAIM_SPAN, sid: str = "src-1", **over: 
     card = {
         "claim": "Revenue momentum predicts next-month returns",
         "mechanism": "Underreaction to fundamentals",
-        "signal_inputs": ["monthly_revenue_yoy"],
+        "signal_inputs": ["tw_monthly_revenue.yoy"],
         "rule_sketch": "rank by monthly_revenue_yoy, hold top decile",
         "horizon": "1m",
         "universe": "TWSE listed",
@@ -2136,3 +2136,71 @@ def test_hypothesis_card_ritual_markers_and_reattempt_match_under_clean_stdlib_i
         timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# Hosted input strings copied from the task's 2026-11-28 00:00–01:00Z source evidence.
+HOSTED_CATALOGUE_INPUTS = [
+    ("news-udn-9904948", ["tw_institutional_flows.net_buy_value", "taiex_daily.close", "taiex_daily.low"], "taiex_daily"),
+    ("news-udn-9904916", ["corporate_actions.split_ratio", "etf_nav.nav_per_unit", "security_reference.board_lot_size", "depository_positions.first_time_small_holder_count"], "corporate_actions"),
+    ("news-udn-9905169", ["fundamentals.quarterly_revenue", "fundamentals.quarterly_net_income"], "fundamentals"),
+]
+
+
+def test_prompt_carries_shared_complete_catalogue_within_input_budget():
+    from services.registry.factor_rule import list_feature_definitions, BUILT_IN_PRICE_VOLUME_FIELDS
+    from services.source_ingestion.hypothesis_compiler import catalogue_summary
+    from services.source_ingestion.semantic_extraction import (
+        estimate_prompt_tokens, HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT,
+    )
+
+    prompt = hypothesis_card.build_hypothesis_prompt(
+        "股" * hypothesis_card.MAX_PROMPT_TEXT_CHARS, source_record_id="s" * 256, origin="news",
+    )
+    compact = prompt.split("CATALOGUE: ", 1)[1].split("\n", 1)[0]
+    catalogue = json.loads(compact)
+    assert catalogue == {k: catalogue_summary()[k] for k in ("datasets", "builtin_fields")}
+    for definition in list_feature_definitions():
+        assert definition.field in catalogue["datasets"][definition.dataset]
+    assert set(catalogue["builtin_fields"]) == BUILT_IN_PRICE_VOLUME_FIELDS
+    schema = json.dumps(hypothesis_card.hypothesis_card_model_schema(), ensure_ascii=False)
+    assert estimate_prompt_tokens(prompt, schema) < HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT
+    assert "dataset.field" in prompt and "no catalogue dataset" in prompt
+
+
+@pytest.mark.parametrize("sid,inputs,missing", HOSTED_CATALOGUE_INPUTS + [
+    ("src-1", ["tw_monthly_revenue.yoy", "tw_price_daily.close"], ""),
+    ("src-1", ["monthly_revenue_yoy"], "unparsable_signal_input"),
+    ("src-1", ["tw_price_daily."], "unparsable_signal_input"),
+    ("src-1", ["bad name.close"], "unparsable_signal_input"),
+    ("src-1", ["tw_price_daily.unknown_field"], "tw_price_daily"),
+])
+def test_top_level_testability_is_checked_against_catalogue(tmp_path, sid, inputs, missing):
+    transport = _Transport({"is_abstained": False, "hypothesis_card":
+                            _card(sid=sid, testability="testable", signal_inputs=inputs)})
+    worker, _, store, _ = _worker(tmp_path, transport)
+    assert _run(worker, _source(sid)).created == 1
+    card = _card_with_origin(store.list_all()[0])
+    assert card["testability"] == (f"needs_data:{missing}" if missing else "testable")
+
+
+@pytest.mark.parametrize("quoted,normalized_match", [("Ａ B", True), ("fabricated", False)])
+def test_citation_rejection_keeps_trace_in_ledger(tmp_path, quoted, normalized_match):
+    body = "A   B market revenue rises"
+    span = {"source_record_id": "src-1", "start": 0, "end": len(quoted), "exact_text": quoted}
+    transport = _Transport({"is_abstained": False, "hypothesis_card": _card(cited_spans=[span])})
+    # Use the extractor directly: relevance routing is unrelated to citation validation.
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    result = extractor.extract(_source(body=body))
+    assert result.status == "rejected"
+    detail = ledger.events("src-1")[0]["detail"]
+    assert f"normalized_match={str(normalized_match).lower()}; exact_text={quoted}" in detail
+
+
+def test_citation_diagnostic_quote_is_bounded():
+    quoted = "Z" * 120
+    with pytest.raises(hypothesis_card.CardRejected) as exc:
+        hypothesis_card.verify_cited_spans({"cited_spans": [{
+            "source_record_id": "s", "start": 0, "end": 120, "exact_text": quoted,
+        }]}, text="a" * 200, source_record_id="s")
+    assert exc.value.detail.endswith("exact_text=" + quoted[:80])

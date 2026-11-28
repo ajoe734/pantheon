@@ -276,9 +276,10 @@ def verify_cited_spans(card: Mapping[str, Any], *, text: str, source_record_id: 
                 return " ".join(unicodedata.normalize("NFKC", value).split())
 
             normalized_exact = normalize(exact or "")
-            trace = json.dumps({"exact_text": (exact or "")[:80],
-                                "normalized_match": bool(normalized_exact and normalized_exact in normalize(text))},
-                               ensure_ascii=False)
+            matched = bool(normalized_exact and normalized_exact in normalize(text))
+            # Raw preview keeps exactly 80 characters even for control-heavy
+            # quotes; JSON escaping could exceed the existing 500-char ledger cap.
+            trace = f"normalized_match={str(matched).lower()}; exact_text={(exact or '')[:80]}"
             raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text; {trace}")
 
 

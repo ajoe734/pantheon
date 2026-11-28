@@ -1,0 +1,68 @@
+{
+  "task_id": "L2-HYPOTHESIS-CARD-CATALOGUE-GROUNDED-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "class": "RC2 / discovery class, owner conversation 2dc972b7",
+  "source_status": "awaiting exact-head independent review",
+  "hosted_status": "pending deployment and first 24-hour read-only proof; no hosted acceptance claimed",
+  "changes": [
+    "Card prompt projects datasets and builtin_fields from the existing shared hypothesis_compiler.catalogue_summary(); every list_feature_definitions dataset.field is included. Model/adapter schemas unchanged.",
+    "finalize_card and compile share stamped_card_testability; unknown top-level or idea inputs downgrade before proposer reservation; unparsable entries use unparsable_signal_input. Existing not_testable and declared missing-data abstentions remain conservative.",
+    "Every validate_proposal refusal carries sanitized model dataset (80 chars) and printable model reason (300 chars), plus validation reason (90 chars), within existing 500-character storage limits. Invalid dataset strings stay rejected.",
+    "Exact citation offsets/substrings remain mandatory. Rejection records normalized_match and the first 80 exact_text characters; normalization is NFKC then whitespace collapse and is diagnostic only."
+  ],
+  "measurements": {
+    "method": "Local shared catalogue / estimate_prompt_tokens (ceil UTF-8 bytes/3); provider token figures below are the task source baseline, not new hosted measurements",
+    "datasets": 31,
+    "fields": 144,
+    "compact_catalogue_chars": 2627,
+    "compact_catalogue_tokens_estimate": 876,
+    "prompt_added_bytes": 2842,
+    "prompt_added_input_tokens_estimate": 948,
+    "added_fraction_of_hosted_12200_to_12700_input_tokens": [
+      0.07465,
+      0.0777
+    ],
+    "maximum_added_input_tokens_per_day": 379200,
+    "worst_case_20000_CJK_character_prompt_tokens_estimate": 21550,
+    "input_token_limit": 40000,
+    "avoided_compile_call_input_tokens_hosted_baseline": 11200
+  },
+  "runtime_budget": {
+    "new_writer_job_or_file": false,
+    "cadence": "existing discovery ticks; at most 400 combined extraction/proposer calls per UTC day, 3/source/day, 6/source total",
+    "size_and_count": "same SQLite stores/row kinds, same 500-character event/outcome reason cap; prompt grows by 2842 bytes per card request; no additional persistent rows from this change",
+    "growth_per_day": "no new row stream; at most 379200 estimated extra input tokens/day if all 400 calls were extraction calls; unknown-input compiler calls are avoided",
+    "cap_and_cleanup": "Existing calls/events/cards and CompilerStore writers remain registered in docs/operations/storage-manifest.json. Input answers and inactive record attempts have 30-day pruning; existing events/cards/compiler rows lack a verified hard size cap or cleanup. This task adds none."
+  },
+  "tests": {
+    "command_regression": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py -q --tb=short",
+    "regression": "325 passed, 3 warnings in 75.67s; terminal exit 0",
+    "command_adapter_schema": ".venv-pantheon/bin/python3 -m pytest services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py -q --tb=short",
+    "adapter_schema_contract": "20 passed in 1.31s; terminal exit 0",
+    "command_probe": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_compiler.py::test_hosted_evidence_probe_reports_real_store_rows_read_only -q --tb=short",
+    "probe_fixture": "1 passed in 2.45s; terminal exit 0; executes the embedded probe against real temporary ledger/compiler stores and verifies unchanged database bytes",
+    "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 existing entries, no failures",
+    "diff": "git diff --check: passed",
+    "environment": "python3 scripts/dev/provision_python_distribution.py --print-python: provisioned task-scoped .venv-pantheon; system python has no pytest"
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "window": "first <=24 hours after exact deployed switch, inside existing daily cap; never trigger paid extraction for acceptance",
+    "execution": "Set SWITCH_AT, END_AT, L2_LEDGER, COMPILER_DB inside the exact deployed source-ingest image; python -c \"import json; exec(json.load(open(\"docs/deployment/evidence/L2-HYPOTHESIS-CARD-CATALOGUE-GROUNDED-20261128/evidence.json\"))[\"hosted_acceptance\"][\"read_only_python\"])\". Use a read-only mounted copy of this evidence file if the image omits docs. Prints stdout only.",
+    "read_only_python": "# Run in the deployed source-ingest image, with exact switch/end ISO timestamps.\n# Read only: neither service store class is instantiated.\nimport collections, datetime, json, os, sqlite3\nfrom pathlib import Path\nfrom services.source_ingestion.hypothesis_card import signal_input_missing_datasets, stamped_card_testability\nfrom services.source_ingestion.hypothesis_compiler import catalogue_summary\nstart, end = os.environ['SWITCH_AT'], os.environ['END_AT']\ns, e = (datetime.datetime.fromisoformat(v.replace('Z', '+00:00')) for v in (start, end))\nassert 0 < (e - s).total_seconds() <= 86400\nledger = sqlite3.connect(Path(os.environ['L2_LEDGER']).resolve().as_uri() + '?mode=ro', uri=True)\ncompiler = sqlite3.connect(Path(os.environ['COMPILER_DB']).resolve().as_uri() + '?mode=ro', uri=True)\nledger.execute('PRAGMA query_only=ON'); compiler.execute('PRAGMA query_only=ON')\nwindow = (s.timestamp(), e.timestamp())\nevents = ledger.execute('SELECT id,ts,source_id,outcome,detail,usage FROM events WHERE unixepoch(ts)>=? AND unixepoch(ts)<? ORDER BY id', window).fetchall()\nanswers = ledger.execute('SELECT e.id,e.source_id,a.card FROM input_answers a JOIN events e ON e.id=a.event_id WHERE a.card IS NOT NULL AND unixepoch(e.ts)>=? AND unixepoch(e.ts)<?', window).fetchall()\ncards = [(event_id, sid, json.loads(raw)) for event_id, sid, raw in answers]\ncounts = collections.Counter(card['testability'] for _,_,card in cards)\nnames = collections.Counter({k.split(':',1)[1]: n for k,n in counts.items() if k.startswith('needs_data:')})\ncatalogue_names = set(catalogue_summary()['datasets'])\nexceptions = [sid for _,sid,card in cards if card['testability']=='testable' and signal_input_missing_datasets(card)]\n# Calls with a recorded usage are answered proposer turns; proposer_failed also\n# covers dispatched failures without usage. Budget/attempt deferrals are excluded.\ncompile_kinds = {'compiled','support_added','not_expressible','needs_data','proposer_failed'}\nproposer = [row for row in events if row[3] in compile_kinds and (row[5] is not None or row[3]=='proposer_failed')]\nviolations, unverifiable = [], []\nfor event_id,ts,sid,kind,detail,usage in proposer:\n    prior = ledger.execute('SELECT a.card FROM input_answers a JOIN events e ON e.id=a.event_id WHERE e.source_id=? AND e.id<? AND a.card IS NOT NULL ORDER BY e.id DESC LIMIT 1', (sid,event_id)).fetchone()\n    if prior is None:\n        unverifiable.append(event_id)\n    elif stamped_card_testability(json.loads(prior[0])) != 'testable':\n        violations.append(event_id)\nrejections = [row for row in events if 'is not an exact substring' in row[4]]\nnormalized = sum('; normalized_match=true; exact_text=' in row[4] for row in rejections)\noutcomes = compiler.execute('SELECT status,reason,dataset,COUNT(*) FROM compile_outcomes WHERE unixepoch(created)>=? AND unixepoch(created)<? GROUP BY status,reason,dataset', window).fetchall()\nprint(json.dumps({'window': [start,end], 'card_count': len(cards), 'card_events': sum(r[3]=='card' for r in events), 'testability':dict(counts), 'testable_input_exceptions':exceptions, 'needs_data_names':dict(names), 'needs_data_catalogue_names':sorted(set(names)&catalogue_names), 'needs_data_catalogue_name_count':len(set(names)&catalogue_names), 'proposer_calls':len(proposer), 'proposer_non_testable':violations, 'proposer_unverifiable':unverifiable, 'compile_outcomes':[{'status':a,'reason':b,'dataset':c,'count':d} for a,b,c,d in outcomes], 'citation_rejections':len(rejections), 'normalized_matches':normalized, 'normalized_match_share':normalized/len(rejections) if rejections else None}, ensure_ascii=False, indent=2))\n",
+    "interpretation": "Report all emitted numbers, names and refusal rows. card_count/card_events mismatch, any proposer_unverifiable, or missing required data means evidence is incomplete; never interpret it as zero exceptions. Inspect the exact cached card for each unverifiable call before claiming proposer invariant. No cards/proposer calls is no evidence of a compiled draft.",
+    "next_root_probe": "Existing acceptance/probes/discovery-pipeline, report exact Root id, deployed SHA, hypothesis_cards status and reason; a draft remains content-dependent.",
+    "observed_numbers": null
+  },
+  "residual_findings": [
+    {
+      "class": "RC3 / existing storage manifest entries",
+      "finding": "Existing events/cards/CompilerStore histories have no verified hard storage cap/cleanup; no new writer or higher detail cap introduced here. Retention repair stays with the storage owner."
+    },
+    {
+      "class": "RC2 / discovery acceptance",
+      "finding": "First 24-hour hosted numbers and next Root hypothesis_cards verdict cannot exist before this source is independently reviewed, merged and deployed. Coordinator must retain hosted acceptance obligation; zero drafts requires reporting refusal detail rather than claiming stage success."
+    }
+  ]
+}
