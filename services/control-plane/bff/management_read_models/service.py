@@ -1548,6 +1548,7 @@ def _project_operator_runtime_state_row(
     telemetry_summary_record: Optional[Dict[str, Any]] = None,
     monitoring_session_record: Optional[Dict[str, Any]] = None,
     prefetched: bool = False,
+    rollback_records: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
     runtime_binding_id = (
@@ -1574,8 +1575,8 @@ def _project_operator_runtime_state_row(
         )
     )
     monitoring_session = _project_runtime_state_monitoring_session(raw_monitoring_session)
-    rollbacks: List[Dict[str, Any]] = []
-    if store and hasattr(store, "get_rollbacks"):
+    rollbacks: List[Dict[str, Any]] = rollback_records if rollback_records is not None else []
+    if rollback_records is None and store and hasattr(store, "get_rollbacks"):
         try:
             rollbacks = store.get_rollbacks(runtime_id) or []
         except Exception:
@@ -2790,6 +2791,26 @@ def _build_management_trading_pulse_ranking_blocks(
 # ---------------------------------------------------------------------------
 # Management Domain Service Class
 # ---------------------------------------------------------------------------
+
+def _pulse_read_batch(reads: Mapping[Any, Callable[[], Any]]) -> Dict[Any, Tuple[bool, Any]]:
+    """Overlap independent reads in the existing bounded owner pool.
+
+    Keep at most 16 futures per batch, propagate caller/tenant/cache/deadline
+    context, and join every submitted read before projection. Failures retain
+    the same per-source fallbacks as the sequential pulse composer.
+    """
+    results = {}
+    items = list(reads.items())
+    for offset in range(0, len(items), 16):
+        futures = {key: submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, read)
+                   for key, read in items[offset:offset + 16]}
+        for key, future in futures.items():
+            try:
+                results[key] = (True, future.result())
+            except Exception:
+                results[key] = (False, None)
+    return results
+
 
 class ManagementService:
     """Consolidated management business domain operations and aggregators."""
@@ -4417,6 +4438,7 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 4. Trading Pulse & Rankings
     # -----------------------------------------------------------------------
+    @request_read_scope()
     def get_trading_pulse(self, snapshot_at: Optional[str] = None, *, include_outcomes: bool = True) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         store = self._resolve_store()
@@ -4427,31 +4449,21 @@ class ManagementService:
         monitoring_sessions: List[Dict[str, Any]] = []
 
         binding_read_ok = False
-        if store is not None:
-            if hasattr(store, "list_runtime_bindings"):
-                try:
-                    runtime_bindings = store.list_runtime_bindings() or []
-                    binding_read_ok = True
-                except Exception:
-                    runtime_bindings = []
-            if hasattr(store, "list_telemetry_summaries"):
-                try:
-                    t_res = store.list_telemetry_summaries() or []
-                    if isinstance(t_res, dict):
-                        telemetry_summaries = list(t_res.values())
-                    elif isinstance(t_res, list):
-                        telemetry_summaries = t_res
-                except Exception:
-                    telemetry_summaries = []
-            if hasattr(store, "list_paper_runtime_monitoring_sessions"):
-                try:
-                    m_res = store.list_paper_runtime_monitoring_sessions() or []
-                    if isinstance(m_res, dict):
-                        monitoring_sessions = list(m_res.values())
-                    elif isinstance(m_res, list):
-                        monitoring_sessions = m_res
-                except Exception:
-                    monitoring_sessions = []
+        reads = _pulse_read_batch({
+            name: getattr(store, name)
+            for name in ("list_runtime_bindings", "list_telemetry_summaries",
+                         "list_paper_runtime_monitoring_sessions")
+            if store is not None and hasattr(store, name)
+        })
+        binding_read_ok, bindings_result = reads.get("list_runtime_bindings", (False, None))
+        runtime_bindings = bindings_result or []
+        for name, target in (("list_telemetry_summaries", telemetry_summaries),
+                             ("list_paper_runtime_monitoring_sessions", monitoring_sessions)):
+            _, value = reads.get(name, (False, None))
+            if isinstance(value, dict):
+                target.extend(value.values())
+            elif isinstance(value, list):
+                target.extend(value)
 
         runtime_bindings, personas, operator_scope = _pulse_operator_scope(store, runtime_bindings)
         if not binding_read_ok:
@@ -4465,18 +4477,13 @@ class ManagementService:
         # owner read (including failures) within this snapshot; artifact IDs
         # are not strategy IDs and must never be probed as a fallback.
         strategies = {}
+        enrichment_reads = {}
         for binding in runtime_bindings:
             sid = binding.get("strategy_id")
             if not isinstance(sid, str) or not sid.strip() or sid in strategies:
                 continue
             strategies[sid] = {}
-            try:
-                strategy = store.get_strategy_spec_detail(sid, version_selector="current")
-                if (isinstance(strategy, dict) and strategy.get("strategy_id") == sid
-                        and strategy.get("tenant_id") == operator_scope.get("tenant_id")):
-                    strategies[sid] = strategy
-            except Exception:
-                pass
+            enrichment_reads[("strategy", sid)] = lambda sid=sid: store.get_strategy_spec_detail(sid, version_selector="current")
         # Rankings and cockpit summaries need metrics, not per-binding journey
         # pages (each page also counts matches and hydrates stage evidence).
         journey_reader = None
@@ -4486,8 +4493,29 @@ class ManagementService:
             except Exception:
                 pass
 
+        # The canonical facade already tenant-verifies the rollback collection.
+        # Read/filter it once rather than re-entering that facade per row. Keep
+        # injected runtime-only reader contracts on their original path.
+        batch_rollbacks = bool(runtime_bindings) and _is_unpatched_port_method(store, "get_rollbacks")
+        if batch_rollbacks:
+            enrichment_reads[("rollbacks", None)] = store.get_rollbacks
+        if journey_reader is not None:
+            for index, binding in enumerate(runtime_bindings):
+                enrichment_reads[("outcome", index)] = lambda binding=binding: _pulse_latest_outcome(journey_reader, binding, snap)
+        enriched = _pulse_read_batch(enrichment_reads)
+        for sid in strategies:
+            _, strategy = enriched[("strategy", sid)]
+            if (isinstance(strategy, dict) and strategy.get("strategy_id") == sid
+                    and strategy.get("tenant_id") == operator_scope.get("tenant_id")):
+                strategies[sid] = strategy
+        rollbacks_by_runtime: Dict[str, List[Dict[str, Any]]] = {}
+        if batch_rollbacks:
+            _, rollbacks = enriched[("rollbacks", None)]
+            for rollback in rollbacks or []:
+                rollbacks_by_runtime.setdefault(rollback.get("runtime_id"), []).append(rollback)
+
         runtime_rows = []
-        for binding in runtime_bindings:
+        for index, binding in enumerate(runtime_bindings):
             if not isinstance(binding, dict):
                 continue
             runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
@@ -4504,6 +4532,7 @@ class ManagementService:
             row = _project_operator_runtime_state_row(
                 store, binding, telemetry_summary_record=raw,
                 monitoring_session_record=session, prefetched=True,
+                rollback_records=rollbacks_by_runtime.get(runtime_id, []) if batch_rollbacks else None,
             )
             person = personas[str(binding["persona_id"])]
             strategy = strategies.get(str(binding.get("strategy_id") or ""), {})
@@ -4513,7 +4542,8 @@ class ManagementService:
                        strategy_name=strategy.get("name") or strategy.get("title"),
                        underlying_symbol=binding.get("underlying_symbol") or strategy.get("underlying_symbol") or (person.get("metadata") or {}).get("underlying_symbol") or symbol or (raw or {}).get("last_fill", {}).get("symbol"))
             _pulse_performance(row, raw, snap)
-            row["latest_outcome"] = _pulse_latest_outcome(journey_reader, binding, snap)
+            row["latest_outcome"] = (enriched.get(("outcome", index), (False, None))[1]
+                                     or _pulse_latest_outcome(None, binding, snap))
             if not row.get("underlying_symbol"):
                 row["underlying_symbol"] = row["latest_outcome"].get("symbol")
             if not include_outcomes:
