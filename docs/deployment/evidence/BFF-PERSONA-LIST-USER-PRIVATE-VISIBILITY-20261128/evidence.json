@@ -12,6 +12,12 @@
   },
   "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility in BFF persona list and detail",
   "source_base": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
+  "publication_history": {
+    "original_anchor": "bae8065fe6fddb1c4a0992cd7762f0a463b85c6a",
+    "rebased_implementation": "0b01032b3",
+    "fixture_validation_commit": "af21a55dca70f2147e63624ee56791638d448935",
+    "method": "Rebased implementation onto current dev, then merged the already-published original anchor to preserve remote ancestry for a normal non-force push. The add/add evidence conflict keeps the recovered owner, fixture fix, current validation, and pending independent review truth. Product code is unchanged from the validated fixture commit."
+  },
   "implementation_status": "local_validation_passed_pending_independent_review_and_hosted_acceptance",
   "implementation": [
     "GET /bff/personas (services/control-plane/bff/personas/routes/collection.py) resolves viewer_user_id once per request via the existing _fleet_viewer_user_id(identity, tenant_id, utc_now) and filters directory.records_by_id.values() with the existing _persona_fleet_record_visible_to(raw, viewer_user_id) imported from services/control-plane/bff/personas/service.py before state and archetype filtering, before paging, and before canonical_total, filtered_total, page_info.total, and meta.total.",
