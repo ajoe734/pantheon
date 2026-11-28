@@ -1613,10 +1613,10 @@ def test_metrics_count_every_planned_deferral_reason_and_not_delivery_retries(tm
     )
 
     queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
-    for index in range(4):
+    for index in range(5):
         queue.enqueue_source_record(_normalized_source(f"src-{index}", tenant_id="test"))
-    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=4, tenant_id="test")
-    assert len(jobs) == 4
+    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=5, tenant_id="test")
+    assert len(jobs) == 5
     for job in jobs:
         queue.begin_job(job, lease_seconds=30)
     future = 4_000_000_000.0
@@ -1624,10 +1624,11 @@ def test_metrics_count_every_planned_deferral_reason_and_not_delivery_retries(tm
     queue.defer_budget(jobs[1], now=future, reason="budget_exhausted")
     queue.defer_budget(jobs[2], now=future, reason="attempts_deferred")
     queue.mark_retry_or_dead_letter(jobs[3], error="registry_sync_failed: timed out", base_delay_seconds=60)
+    queue.defer_budget(jobs[4], now=future, reason="extraction_unavailable", next_window=False)
     metrics = queue.metrics()
-    assert metrics["retry_wait"] == 4
-    assert metrics["deferred"] == 3
-    assert {"budget_exhausted", "attempts_deferred", "extraction_tick_budget"} == PLANNED_DEFERRAL_REASONS
+    assert metrics["retry_wait"] == 5
+    assert metrics["deferred"] == 4
+    assert {"budget_exhausted", "attempts_deferred", "extraction_tick_budget", "extraction_unavailable"} == PLANNED_DEFERRAL_REASONS
 
 
 def test_defer_budget_refuses_an_unplanned_reason(tmp_path) -> None:
