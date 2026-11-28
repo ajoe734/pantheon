@@ -11,7 +11,7 @@
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "b6e28a36593b0e399e3c9e3ce5a85cecf90beef95671c3eee4a738e38a709ad7"
+    "sha256": "2b89c1efde148296e0df7c6aa3f6f2e7d9e2a03344e8fca59b42cb0c44be7307"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -45,6 +45,10 @@
     "agora.servant.habits.v1": [
       "GET /bff/agora/servant/habits",
       "PATCH /bff/agora/servant/habits"
+    ],
+    "agora.servant.clarify.v1": [
+      "POST /bff/agora/servant/sessions/{session_id}/messages",
+      "GET /bff/agora/servant/sessions/{session_id}/stream"
     ]
   },
   "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted. AGORA-PAPER-INTENT-EXECUTION-20261127 adds specs/agora/v15/governed_intent_handoff.schema.json (supersedes the frozen v4 handoff schema): paper handoffs target paper_execution; paper_validation_request and management_governance are removed."

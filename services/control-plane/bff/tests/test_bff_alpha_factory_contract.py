@@ -914,7 +914,11 @@ def test_discovered_lane_lists_open_demands_and_hypothesis_cards(monkeypatch) ->
     assert counts["collected_text_records"] == {"value": 120, "status": "ok"}
     assert counts["closed_text_records"] == {"value": 90, "status": "ok"}
     assert counts["dropped_irrelevant"] == {"value": 70, "status": "ok"}
-    assert counts["llm_calls_today"] == {"value": 37, "status": "ok", "cap": 400, "scope": "service"}
+    assert counts["llm_calls_today"] == {
+        "value": 37, "status": "ok", "cap": 400, "scope": "service",
+        "distinct_sources": None, "calls_per_source": None,
+        "distinct_sources_reason": "owner_distinct_sources_not_reported",
+    }
     summary = body["data"]["discovery_summary"]
     assert summary["closed_total"]["by_reason"]["l2_irrelevant"] == 8000
     assert summary["collected_by_source_family"] == {"news": 100, "paper": 20}
@@ -937,6 +941,57 @@ def test_failed_owner_summary_sections_keep_their_reason(monkeypatch) -> None:
         assert counts[key] == {"value": None, "status": "unavailable", "reason": "distillation_queue_missing"}, key
     assert counts["llm_calls_today"]["reason"] == "extraction_ledger_missing"
     assert body["data"]["discovered"] == []
+
+
+def _real_ledger_llm_calls(tmp_path: Path, calls_by_source: Dict[str, int]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """(owner llm_calls section, ExtractionLedger.summary()) from one real ledger file."""
+    from services.source_ingestion import discovery_summary as ds
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    path = tmp_path / "l2_extraction_ledger.sqlite"
+    ledger = ExtractionLedger(path, daily_cap=400)
+    for source_id, n in calls_by_source.items():
+        for _ in range(n):
+            assert ledger.reserve_call(source_id)
+    owner = ds.read_discovery_summary(
+        queue_path=tmp_path / "missing_queue.jsonl", tenant_id="tenant-dev", ledger_path=path
+    )
+    return owner["llm_calls"], ledger.summary()
+
+
+def test_llm_calls_today_carries_distinct_sources_from_the_real_ledger(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    llm_calls, ledger_summary = _real_ledger_llm_calls(tmp_path, {"src-a": 3, "src-b": 2, "src-c": 1})
+    assert ledger_summary["distinct_sources"] == 3 and ledger_summary["calls_per_source"] == 2.0
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary(llm_calls=llm_calls))))
+    llm = body["data"]["counts"]["llm_calls_today"]
+    assert llm["status"] == "ok" and llm["value"] == ledger_summary["calls"] == 6
+    assert llm["distinct_sources"] == ledger_summary["distinct_sources"]
+    assert llm["calls_per_source"] == ledger_summary["calls_per_source"]
+    assert "distinct_sources_reason" not in llm and "calls_per_source_reason" not in llm
+
+
+def test_llm_calls_today_without_upstream_distinct_sources_is_null_with_reason(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    # Older owner: no distinct_sources key at all.
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary())))
+    llm = body["data"]["counts"]["llm_calls_today"]
+    assert llm["value"] == 37
+    assert llm["distinct_sources"] is None and llm["calls_per_source"] is None
+    assert llm["distinct_sources_reason"] == "owner_distinct_sources_not_reported"
+    # Owner reports null with its own reason: keep it, never a 0.
+    legacy = {**_summary()["llm_calls"], "distinct_sources": None, "calls_per_source": None,
+              "distinct_sources_reason": "ledger_sources_not_recorded_for_day"}
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary(llm_calls=legacy))))
+    llm = body["data"]["counts"]["llm_calls_today"]
+    assert llm["distinct_sources"] is None
+    assert llm["distinct_sources_reason"] == "ledger_sources_not_recorded_for_day"
+    # Real ledger with no calls today: 0 sources is true, the ratio is not.
+    llm_calls, _ = _real_ledger_llm_calls(tmp_path, {})
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary(llm_calls=llm_calls))))
+    llm = body["data"]["counts"]["llm_calls_today"]
+    assert (llm["value"], llm["distinct_sources"], llm["calls_per_source"]) == (0, 0, None)
+    assert llm["calls_per_source_reason"] == "no_calls_today"
 
 
 def test_summary_of_another_tenant_is_unavailable(monkeypatch) -> None:
