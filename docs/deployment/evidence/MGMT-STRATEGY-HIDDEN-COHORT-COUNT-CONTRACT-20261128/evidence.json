@@ -4,7 +4,7 @@
   "reviewer": "Antigravity",
   "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
   "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
-  "source_base": "1107807702c128980011bd42bace5c37177a336a",
+  "source_base": "b77004dae7dba93c53179ec9e1b477ce311b7968",
   "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
   "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
   "incident": {
@@ -57,6 +57,11 @@
       "command": "timeout 60s /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py",
       "exit_code": 0,
       "result": "38 passed, 3 dependency deprecation warnings in 5.96s; includes explicit Registry-unavailable regression, terminal output collected."
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_strategy_list_overlap_reads.py --tb=short",
+      "exit_code": 0,
+      "result": "18 passed, 3 warnings in 7.48s; terminal output collected."
     }
   ],
   "reader_inventory": {
@@ -67,7 +72,8 @@
       "services/control-plane/bff/tests/test_strategy_list_latency.py",
       "services/control-plane/bff/tests/test_strategy_list_test_scope.py",
       "services/control-plane/bff/tests/test_strategy_list_default_view.py",
-      "services/control-plane/bff/tests/test_management_non_trading_read_scope.py"
+      "services/control-plane/bff/tests/test_management_non_trading_read_scope.py",
+      "services/control-plane/bff/tests/test_strategy_list_overlap_reads.py"
     ],
     "unchanged": [
       "services/control-plane/bff/strategies/service.py",
@@ -86,5 +92,19 @@
     ],
     "read_only_probe": "acceptance/probes/mgmt-strategy-meeting-research-readable"
   },
-  "residual_findings": []
+  "residual_findings": [],
+  "ci_return": {
+    "pr": 8006,
+    "previous_head": "aa4ae3d5e560efbba6d607abea7dc469e281bc3b",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46093314384/job/140820527892",
+    "failure": "test_strategy_list_overlap_reads.py: 11 failed, 7 passed; historical baseline lacks hidden_persona_strategy_count and persona_exclusion_scope.",
+    "local_reproduction": {
+      "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_strategy_list_overlap_reads.py --tb=short",
+      "exit_code": 1,
+      "result": "11 failed, 7 passed, 3 warnings in 6.75s; terminal output collected."
+    },
+    "repair": "Compare the entire response with the historical response plus exactly the two required cohort fields; this fixture contains no non-trading personas. Preserve historical route and concurrency barrier negative control, owner call counts, pagination, data rows and failure outcomes.",
+    "acceptance_scope": "Acceptance 6: regression readers remain compatible; no runtime source change or additional owner reads.",
+    "review": "Previous approval does not apply to the new head. Fresh Antigravity exact-head review required."
+  }
 }
