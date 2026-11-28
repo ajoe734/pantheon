@@ -977,3 +977,34 @@ def test_hosted_20261127_empty_search_cannot_pass_search_or_gate(integrity_reaso
             outcome='failed', reason='template_search_unavailable:template_integrity_mismatch:171',
             reason_code='template_search_unavailable')
         assert stage(run(board), 'template_search')['reason'] == 'last_search_attempted_nothing'
+
+
+@pytest.mark.parametrize("extraction_ratio, expected", [(1.0, "passed"), (1.5, "passed"), (1.6, "failed")])
+def test_card_ratio_uses_owner_extraction_step(extraction_ratio, expected):
+    board = good_board()
+    board["data"]["counts"]["llm_calls_today"].update(value=200, distinct_sources=100)
+    board["data"]["discovery_summary"]["llm_calls"].update(
+        extraction_calls=int(extraction_ratio * 100), compile_calls=200 - int(extraction_ratio * 100),
+        extraction_calls_per_source=extraction_ratio)
+    result = stage(run(board), "hypothesis_cards")
+    assert result["status"] == expected
+    values = result["values"]
+    assert values["calls_today"] == 200 and values["calls_per_source"] == 2.0
+    assert values["compile_calls"] == 200 - int(extraction_ratio * 100)
+    assert values["extraction_calls_per_source"] == extraction_ratio
+    assert values["calls_per_source_basis"] == "extraction"
+    if expected == "failed":
+        assert result["reason"] == "llm_calls_per_source_over_limit"
+
+
+@pytest.mark.parametrize("ratio", ["missing", None, "1.0", True, float("nan"), float("inf"), -1])
+def test_missing_or_unreadable_split_keeps_1128_total_failure(ratio):
+    board = good_board()
+    board["data"]["counts"]["llm_calls_today"].update(value=400, distinct_sources=207)
+    if ratio != "missing":
+        board["data"]["discovery_summary"]["llm_calls"]["extraction_calls_per_source"] = ratio
+    result = stage(run(board), "hypothesis_cards")
+    assert result["status"] == "failed" and result["reason"] == "llm_calls_per_source_over_limit"
+    assert result["values"]["calls_per_source"] == 1.932
+    assert result["values"]["calls_per_source_basis"] == "total"
+    assert result["values"]["extraction_calls_per_source"] is None

@@ -87,7 +87,8 @@ FALLBACK_PREFIX = "evidence suggests"
 GATE_REFUSALS = ("survivorship_limited", "below_threshold", "no_passing_gate_result")
 # Outcomes that mean the stage could not do its job (never working output).
 UNAVAILABLE_CODES = ("mandate_universe_missing", "dataset_unavailable")
-# Paid L2 calls per distinct news source today. One call per source and
+# Extraction reservations per distinct source today (compile shares the cap,
+# but not this repeat-article gate). One call per source and
 # unchanged extraction input leaves room for a revised article or a retry; an
 # article re-paid on every hourly collector refetch shows up as ~3 or more.
 MAX_CALLS_PER_SOURCE = 1.5
@@ -466,9 +467,8 @@ def stage_hypothesis_cards(
     checked_per_source = extraction_per_source if basis == "extraction" else per_source
     split_values = {"compile_calls": compile_calls, "extraction_calls_per_source": extraction_per_source,
                     "calls_per_source_basis": basis}
-    # The distinct-source count comes from the ledger through the owner summary
-    # and the BFF board. Until that read is plumbed the stage still reports the
-    # calls it can read and says the ratio is not measurable (not a pass on it).
+    # Preserve the total ratio for callers, but judge repeated extraction only.
+    # Older owners without a usable split retain the original total-call gate.
     if checked_per_source is not None and checked_per_source > MAX_CALLS_PER_SOURCE:
         return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, unsent_calls_today=unsent, cap=cap,
                        distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE, **split_values)

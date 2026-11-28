@@ -1435,6 +1435,15 @@
    ],
    "register_class": "RC3",
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "call_step_budget": {
+    "task": "L2-CALLS-PER-SOURCE-SPLIT-EXTRACTION-AND-COMPILE-20261128",
+    "cadence": "existing distillation tick only; every extraction/compile reservation and proven-unsent refund updates the same UTC-day calls row",
+    "size_and_count": "one INTEGER NOT NULL DEFAULT 0 compile_calls per existing calls row; one row per UTC day across the service, no new writer, table, file, job or cadence",
+    "growth_per_day": "at most 8 logical bytes per existing daily row (SQLite encoding/page overhead varies); no extra rows",
+    "cap": "compile_calls <= calls.n; shared daily cap remains 400 and per-source limits remain 3/day and 6/total; existing calls history has no hard row cap (RC3 WP3.1)",
+    "cleanup": "same lifetime as calls rows; no new retention path; whole-ledger history remains the existing RC3 WP3.1 obligation",
+    "acceptance": "services/source_ingestion/tests/test_hypothesis_extraction.py::test_call_step_split_and_mixed_limits; test_compile_refund_removes_both_counts_and_uses_original_day; test_compile_column_additive_migration_and_absent_summary"
+   },
    "unsent_budget": {
     "cadence": "existing 60-second distillation tick; stop at first unsent transport/policy failure, <=1 outage event/tick (about 1440/day); local input refusal may also produce one unsent event per processed record, within the existing tick batch limit",
     "growth_per_day": "counter adds at most 8 bytes per existing daily row; outage reason events about 1 MiB/day typical and <=4.6 MB UTF-8 payload/day at 1440 events, until the global count cap; no new file, table or recurring job",
