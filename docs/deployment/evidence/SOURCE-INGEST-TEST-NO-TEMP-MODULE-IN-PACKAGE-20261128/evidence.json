@@ -1,0 +1,53 @@
+{
+  "task_id": "SOURCE-INGEST-TEST-NO-TEMP-MODULE-IN-PACKAGE-20261128",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "scope": "Test-only source-ingest probe isolation; no production, deployment, digest-policy or controller changes.",
+  "incident": {
+    "ci_run": "https://github.com/ajoe734/pantheon/actions/runs/46137644402",
+    "ci_job": "https://github.com/ajoe734/pantheon/actions/runs/46137644402/job/140957522006",
+    "pr": "https://github.com/ajoe734/pantheon/pull/8030",
+    "head": "59936ee883616b20e18fb72e143c222c9e4dd81e",
+    "log_excerpt": "FAILED services/source_ingestion/tests/test_controller_worker_manual_once.py::test_run_controller_once_concurrent_same_key_multiprocess - AssertionError: subprocess failed: {'success': False, 'error_type': 'FileNotFoundError', 'error_msg': \"[Errno 2] No such file or directory: '/home/runner/work/pantheon/pantheon/services/source_ingestion/_deployed_requirement_state_probe.py'\", 'stage': None}",
+    "ci_job_log_sha256": "cc6bc54b2b43317ac6c7285a4a853ed22d8d68459c418b1429120a1428fb2003",
+    "cause": "_deployed_reader wrote and unlinked the probe inside the package, while _runtime_deployment enumerated package *.py paths then read their bytes in another process."
+  },
+  "reproduce_first": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py::test_deployed_reader_cleanup_cannot_race_runtime_digest",
+    "exit_code_before_fix": 1,
+    "summary": "1 failed in 1.69s; FileNotFoundError for services/source_ingestion/_deployed_requirement_state_probe.py in controller_worker.py:2103 path.read_bytes()",
+    "method": "Before changing _deployed_reader, hook its write boundary to enter the real _runtime_deployment; materialize rglob paths, unlink the enumerated probe, then perform the real digest reads. No sleep or probabilistic scheduling. The same regression test now passes because tmp_path is outside the enumerated package.",
+    "terminal_log_sha256": "66b4022c25d91b9b106eb2f794088eaca175abe557e43146fdc494e779117c03"
+  },
+  "implementation": {
+    "probe_path": "tmp_path / _deployed_requirement_state_probe.py; removed by existing finally block",
+    "module_name": "services.source_ingestion._deployed_requirement_state_probe",
+    "deployed_reader_commit": "32fc7da61",
+    "compatibility": "All original journal projection, post-compaction digest, and byte-identical reader-function assertions retained unchanged; deployed-reader tests executed, not skipped.",
+    "guard": "Module-autouse fixture in both scoped test files intercepts builtins.open, io.open (including pathlib writes), and os.open write attempts for package *.py outside tests. Before/after Python-file sets also detect leftover files from subprocesses. Three self-checks prove transient writes are rejected before creation."
+  },
+  "validation": {
+    "initial_focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
+    "initial_focused_result": "25 passed, 1 skipped in 23.57s; exit 0",
+    "skip": "Only pre-existing opt-in ~10 minute journal benchmark; PANTHEON_RUN_COMPACTION_BENCHMARK is not enabled.",
+    "repeat_status": "collecting bounded foreground batches; final counts to be recorded before review"
+  },
+  "runtime_budget": {
+    "hosted_cadence": "none; tests only, on demand",
+    "hosted_size_bytes": 0,
+    "hosted_count": 0,
+    "hosted_growth_per_day_bytes": 0,
+    "hosted_cap_bytes": 0,
+    "hosted_cleanup": "not applicable; no hosted writer or recurring job",
+    "test_temporary_probe": "One 61,351-byte deployed-source .py per helper invocation, in that test tmp_path; existing finally unlinks it. Import may produce one bounded .pyc in tmp_path/__pycache__; pytest manages the temporary directories with its normal retention (three sessions by default). One sys.modules key is reused. No .py is created in the package."
+  },
+  "residual_findings": [
+    {
+      "owner": "market-data coordinator cb4f6795",
+      "class": "RC2 market-data deployment identity",
+      "finding": "Production _runtime_deployment still hashes arbitrary stray package *.py and can race if another runtime actor removes one after enumeration.",
+      "disposition": "Recorded in the existing Required check that fails under CI load register row for coordinator follow-through. Digest policy and production hardening are outside this test-only task."
+    }
+  ],
+  "delivery": "Local validation in progress; independent review and supervisor merge pending."
+}
