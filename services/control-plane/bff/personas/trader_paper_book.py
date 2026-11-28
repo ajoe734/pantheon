@@ -28,6 +28,7 @@ from services.control_plane.bff.persona_provisioning_coordinator import (
     ProvisioningIds,
     TERMINAL_RUNTIME_BINDING_STATUSES,
     deterministic_provisioning_ids,
+    provisioning_ids_for_token,
 )
 from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
 
@@ -56,6 +57,7 @@ TRADER_PAPER_BOOK_DEFAULT_UNIVERSE_BY_CURRENCY: Dict[str, tuple[str, ...]] = {
 LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE: tuple[str, ...] = ("SPY",)
 TRADER_PAPER_BOOK_IDEMPOTENCY_PREFIX = "trader-paper-book:"
 TRADER_PAPER_BOOK_PROVISIONED_STEP = "trader_paper_book_provisioned"
+TRADER_PAPER_BOOK_GENERATION_STARTED_STEP = "trader_paper_book_generation_started"
 
 _CURRENCY_RE = re.compile(r"^[A-Z]{3,8}$")
 _STAGE_FIELD_NAMES: tuple[str, ...] = (
@@ -401,6 +403,225 @@ def trader_paper_book_ids(tenant_id: str, persona_id: str) -> ProvisioningIds:
 
 def trader_paper_runtime_id(ids: ProvisioningIds) -> str:
     return f"rt-persona-paper-{ids.token}"
+
+
+def trader_paper_book_generation(record: Optional[ProvisioningRecord]) -> int:
+    """Current book generation recorded on the book's ledger row (1 when none is recorded)."""
+    references = getattr(record, "references", None)
+    marker = references.get("book_generation") if isinstance(references, Mapping) else None
+    if not isinstance(marker, Mapping):
+        return 1
+    try:
+        generation = int(marker.get("generation") or 1)
+    except (TypeError, ValueError):
+        return 1
+    return max(generation, 1)
+
+
+def trader_paper_book_generation_ids(
+    tenant_id: str,
+    persona_id: str,
+    generation: int = 1,
+) -> ProvisioningIds:
+    """Owner ids of one trader paper book generation.
+
+    Generation 1 keeps the ids every existing book was created with; a later
+    generation gets its own pool, capital binding, strategy, artifact, plan and
+    runtime ids, derived deterministically so a replay never orphans owner ids.
+    """
+    if int(generation) <= 1:
+        return trader_paper_book_ids(tenant_id, persona_id)
+    identity = json.dumps(
+        {
+            "tenant_id": str(tenant_id or "").strip(),
+            "persona_id": str(persona_id or "").strip(),
+            "book_generation": int(generation),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return provisioning_ids_for_token(hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20])
+
+
+def _read_trader_paper_book_ledger(
+    coordinator: Any,
+    record: ProvisioningRecord,
+) -> Optional[ProvisioningRecord]:
+    """The book's own ledger row (by its deterministic key), or None."""
+    getter = getattr(getattr(coordinator, "store", None), "get", None)
+    if not callable(getter):
+        return None
+    existing = getter(record.tenant_id, record.idempotency_key)
+    if existing is None or not is_trader_paper_book_ledger_record(existing):
+        return None
+    return existing
+
+
+def _book_generation_replacement_started(ledger: ProvisioningRecord) -> bool:
+    """True when the current generation is retired or its book retirement has started."""
+    retirement = ledger.references.get("retirement")
+    return ledger.state == "retired" or isinstance(retirement, Mapping)
+
+
+def _runtime_binding_retirer(runtime_client: Any) -> Callable[[str, str], Any]:
+    """Retire one live book RuntimeBinding through the Runtime-Manager status machine."""
+    transitioner = getattr(runtime_client, "transition", None)
+    if not callable(transitioner):
+        raise PersonaProvisioningCoordinationError(
+            "Runtime-Manager client does not support transition for book retirement",
+            reason_code="runtime_manager_unavailable",
+        )
+
+    def retire(binding_id: str, status: str) -> Any:
+        if str(status or "").strip().lower() == "pending_pause":
+            transitioner(binding_id, "paused")
+        return transitioner(binding_id, "retired")
+
+    return retire
+
+
+def _retire_and_advance_trader_paper_book_generation(
+    coordinator: PersonaProvisioningCoordinator,
+    ledger: ProvisioningRecord,
+    *,
+    runtime_client: Any,
+    currency: str,
+) -> ProvisioningRecord:
+    """Retire the book's current generation (book only) and start the next on the same row.
+
+    Only reachable from :func:`ensure_trader_paper_book`. The servant Persona,
+    its memory and its owner scope are never retired: the coordinator's
+    ``retire_case`` runs book-scoped (``retain_persona``) and retires the
+    generation's saga, RuntimeBinding, PersonaCapitalBinding and CapitalPool.
+    """
+    if not is_trader_paper_book_ledger_record(ledger):
+        raise PersonaProvisioningCoordinationError(
+            "Only a trader servant paper book ledger row can move to a new book generation",
+            reason_code="trader_paper_book_generation_not_book_row",
+        )
+    retirement = ledger.references.get("retirement")
+    retirement_scope = retirement.get("scope") if isinstance(retirement, Mapping) else None
+    if isinstance(retirement, Mapping) and retirement_scope != "book":
+        # A Persona-scope retirement (the servant itself) is never re-leased.
+        raise PersonaProvisioningCoordinationError(
+            "Trader paper book ledger row was retired with its Persona; it cannot be re-leased",
+            reason_code="trader_paper_book_retired_with_persona",
+        )
+    if ledger.state == "retired" and retirement_scope != "book":
+        raise PersonaProvisioningCoordinationError(
+            "Trader paper book ledger row is retired without a book-scope retirement receipt",
+            reason_code="trader_paper_book_retired_with_persona",
+        )
+    if not trader_paper_book_default_universe(currency):
+        raise PersonaProvisioningCoordinationError(
+            f"No trader paper book default universe for currency {currency!r}",
+            reason_code="trader_paper_book_universe_unapproved",
+        )
+    generation = trader_paper_book_generation(ledger)
+    ids = trader_paper_book_generation_ids(ledger.tenant_id, ledger.persona_id, generation)
+    if ledger.state != "retired":
+        retired = coordinator.retire_case(
+            ledger,
+            reason=(
+                f"trader paper book generation {generation} replaced: approved artifact "
+                "universe is the legacy default"
+            ),
+            retain_persona=True,
+            ids=ids,
+            runtime_binding_reader=lambda _plan_id, pool_id: _list_pool_runtime_bindings(
+                runtime_client, pool_id
+            ),
+            runtime_binding_retirer=_runtime_binding_retirer(runtime_client),
+        )
+        if retired.state != "retired":
+            pending = retired.references.get("retirement")
+            pending_map = pending if isinstance(pending, Mapping) else {}
+            raise PersonaProvisioningCoordinationError(
+                f"Trader paper book generation {generation} retirement is pending at "
+                f"{pending_map.get('pending_step')!r}: {pending_map.get('pending_reason')}",
+                reason_code="trader_paper_book_generation_retirement_pending",
+            )
+        ledger = retired
+    return _begin_next_trader_paper_book_generation(
+        coordinator, ledger, ids=ids, currency=currency
+    )
+
+
+def _begin_next_trader_paper_book_generation(
+    coordinator: PersonaProvisioningCoordinator,
+    ledger: ProvisioningRecord,
+    *,
+    ids: ProvisioningIds,
+    currency: str,
+) -> ProvisioningRecord:
+    """Move a retired generation's receipts under ``references.book_generations`` and
+    re-lease the same row (same tenant, persona_id, idempotency key) for the next one."""
+    store = coordinator.store
+    leased = store.acquire(
+        ledger.tenant_id,
+        ledger.idempotency_key,
+        lease_owner=coordinator.lease_owner,
+        lease_seconds=coordinator.lease_seconds,
+    )
+    if leased is None:
+        raise PersonaProvisioningCoordinationError(
+            "Trader paper book provisioning record is leased by another coordinator",
+            reason_code="provisioning_lease_busy",
+        )
+    try:
+        retirement = leased.references.get("retirement")
+        if (
+            leased.state != "retired"
+            or not is_trader_paper_book_ledger_record(leased)
+            or not isinstance(retirement, Mapping)
+            or retirement.get("scope") != "book"
+        ):
+            # Already advanced by a concurrent ensure (or not a book retirement):
+            # nothing to move.
+            return leased
+        generation = trader_paper_book_generation(leased)
+        references = dict(leased.references)
+        history = dict(references.pop("book_generations", None) or {})
+        marker = references.pop("book_generation", None)
+        references.pop("retirement", None)
+        history[str(generation)] = {
+            "generation": generation,
+            "ids": ids.to_dict(),
+            "state": "retired",
+            "current_step": leased.current_step,
+            "retirement": deepcopy(dict(retirement)),
+            "references": deepcopy(references),
+            **({"book_generation": deepcopy(dict(marker))} if isinstance(marker, Mapping) else {}),
+            **({"result": deepcopy(leased.result)} if leased.result is not None else {}),
+            **({"error": deepcopy(leased.error)} if leased.error is not None else {}),
+            **(
+                {"compensation": deepcopy(leased.compensation)}
+                if leased.compensation is not None
+                else {}
+            ),
+        }
+        leased.references = {
+            "book_generations": history,
+            "book_generation": {
+                "generation": generation + 1,
+                "previous_generation": generation,
+                "symbols": list(trader_paper_book_default_universe(currency)),
+                "currency": str(currency or "").strip().upper(),
+                "started_at": _utc_now_iso(),
+            },
+        }
+        leased.state = "provisioning"
+        leased.current_step = TRADER_PAPER_BOOK_GENERATION_STARTED_STEP
+        leased.result = None
+        leased.error = None
+        leased.compensation = None
+    finally:
+        leased = store.release(
+            leased,
+            lease_owner=coordinator.lease_owner,
+            lease_seconds=coordinator.lease_seconds,
+        )
+    return leased
 
 
 def _resolve_dynamic_runtime_manager_auth(
@@ -1121,6 +1342,7 @@ def _finalize_trader_paper_book_ledger_record(
     runtime_binding: Mapping[str, Any],
     ids: ProvisioningIds,
     provisioned_at: str,
+    generation: int = 1,
 ) -> Optional[str]:
     """Move the book's existing ``bff.persona_provisioning`` row to a terminal state.
 
@@ -1171,6 +1393,7 @@ def _finalize_trader_paper_book_ledger_record(
                 "runtime_binding_id": binding_id,
                 "runtime_id": str(runtime_binding.get("runtime_id") or trader_paper_runtime_id(ids)),
                 "provisioned_at": provisioned_at,
+                "book_generation": generation,
             }
     finally:
         leased = store.release(
@@ -1229,8 +1452,6 @@ def ensure_trader_paper_book(
         requested_by=clean_requester,
         starting_capital=starting_capital,
     )
-    ids = deterministic_provisioning_ids(record)
-    runtime_id = trader_paper_runtime_id(ids)
 
     from . import service as personas_service
 
@@ -1243,6 +1464,73 @@ def ensure_trader_paper_book(
         explicit_client=runtime_client if runtime_client is not None else runtime_manager_client,
         env=env,
     )
+
+    ledger = _read_trader_paper_book_ledger(active_coordinator, record)
+    if ledger is not None and _book_generation_replacement_started(ledger):
+        # Resume an interrupted replacement: finish retiring the current
+        # generation (no-op when already retired) and start the next one.
+        ledger = _retire_and_advance_trader_paper_book_generation(
+            active_coordinator,
+            ledger,
+            runtime_client=active_runtime_client,
+            currency=starting_capital["currency"],
+        )
+    generation = trader_paper_book_generation(ledger)
+    provision_kwargs: Dict[str, Any] = {
+        "clean_tenant": clean_tenant,
+        "clean_persona": clean_persona,
+        "clean_requester": clean_requester,
+        "agora_user_id": agora_user_id,
+        "persona_record": persona_record,
+        "active_coordinator": active_coordinator,
+        "active_runtime_client": active_runtime_client,
+        "persona_write_owner": persona_write_owner,
+        "env": env,
+        "now": now,
+        "starting_capital": starting_capital,
+        "record": record,
+    }
+    try:
+        return _ensure_trader_paper_book_generation(generation=generation, **provision_kwargs)
+    except PersonaProvisioningCoordinationError as exc:
+        if exc.reason_code != "trader_paper_book_universe_unapproved":
+            raise
+        # The generation's approved artifact is on the legacy universe (a
+        # pre-#7983 book). Owner-approved artifacts are never rewritten: the
+        # generation is retired as a book (the servant Persona is retained)
+        # and the same ledger row is re-leased for the next generation, which
+        # is minted and approved on the book default universe.
+        current = _read_trader_paper_book_ledger(active_coordinator, record)
+        if current is None or trader_paper_book_generation(current) != generation:
+            raise
+        _retire_and_advance_trader_paper_book_generation(
+            active_coordinator,
+            current,
+            runtime_client=active_runtime_client,
+            currency=starting_capital["currency"],
+        )
+    return _ensure_trader_paper_book_generation(generation=generation + 1, **provision_kwargs)
+
+
+def _ensure_trader_paper_book_generation(
+    *,
+    generation: int,
+    clean_tenant: str,
+    clean_persona: str,
+    clean_requester: str,
+    agora_user_id: Optional[str],
+    persona_record: Optional[Mapping[str, Any]],
+    active_coordinator: PersonaProvisioningCoordinator,
+    active_runtime_client: Any,
+    persona_write_owner: Optional[Any],
+    env: Optional[Mapping[str, str]],
+    now: str,
+    starting_capital: Mapping[str, Any],
+    record: ProvisioningRecord,
+) -> Dict[str, Any]:
+    """Provision (GET-first) one generation of the trader paper book on its owner ids."""
+    ids = trader_paper_book_generation_ids(clean_tenant, clean_persona, generation)
+    runtime_id = trader_paper_runtime_id(ids)
 
     pool_path = f"/api/capital-pools/{ids.capital_pool_id}"
     binding_path = f"/api/bindings/{ids.persona_capital_binding_id}"
@@ -1567,6 +1855,7 @@ def ensure_trader_paper_book(
         "writer_actor_id": active_coordinator.actor_id,
         "requested_by": clean_requester,
         "provisioned_at": now,
+        "book_generation": generation,
     }
 
     ledger_state = _finalize_trader_paper_book_ledger_record(
@@ -1575,6 +1864,7 @@ def ensure_trader_paper_book(
         runtime_binding=runtime_binding,
         ids=ids,
         provisioned_at=now,
+        generation=generation,
     )
     if ledger_state is not None:
         book_summary["provisioning_ledger_state"] = ledger_state
@@ -1621,14 +1911,28 @@ def read_trader_paper_book(
 
     now = _utc_now_iso()
     starting_capital = resolve_trader_paper_starting_capital(env, as_of=now)
-    ids = trader_paper_book_ids(clean_tenant, clean_persona)
-    runtime_id = trader_paper_runtime_id(ids)
 
     from . import service as personas_service
 
     active_coordinator = coordinator or personas_service._chain_paper_capital_coordinator(
         clean_tenant
     )
+    # The book's ledger row names its current generation; a row whose
+    # generation is retired (replacement in progress) has no provisioned book.
+    ledger = _read_trader_paper_book_ledger(
+        active_coordinator,
+        trader_paper_book_provisioning_record(
+            clean_tenant,
+            clean_persona,
+            requested_by="control-plane-bff",
+            starting_capital=starting_capital,
+        ),
+    )
+    if ledger is not None and ledger.state == "retired":
+        return None
+    generation = trader_paper_book_generation(ledger)
+    ids = trader_paper_book_generation_ids(clean_tenant, clean_persona, generation)
+    runtime_id = trader_paper_runtime_id(ids)
     active_runtime_client = _build_runtime_manager_client(
         tenant_id=clean_tenant,
         actor_id=active_coordinator.actor_id,
@@ -1740,6 +2044,7 @@ def read_trader_paper_book(
         "capital_pool": pool_copy,
         "persona_capital_binding": pcb_copy,
         "runtime_binding": runtime_binding,
+        "book_generation": generation,
         "idempotent_replay": True,
         "created_capital_pool": False,
         "created_runtime_binding": False,

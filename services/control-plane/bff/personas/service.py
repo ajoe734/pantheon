@@ -1544,7 +1544,9 @@ def plan_persona_provisioning_case_retirement(
     """
 
     record = _persona_provisioning_store().get_by_persona(tenant_id, persona_id)
-    if record is None:
+    if record is None or _is_trader_paper_book_ledger_row(record):
+        # PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: a trader paper book row
+        # (even a retired book generation) is never the servant Persona's case.
         return None
     retirement = record.references.get("retirement")
     retirement = retirement if isinstance(retirement, Mapping) else {}
