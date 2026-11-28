@@ -91,10 +91,10 @@
     }
   ],
   "wait_policy": {
-    "readiness_deadline_seconds": 420,
-    "margin_over_observed_start_to_ready_seconds": 226.912,
+    "readiness_deadline_seconds": 300,
+    "margin_over_observed_start_to_ready_seconds": 106.912,
     "restore_guard_reserve_seconds": 600,
-    "reason": "420s readiness + existing start-period health recheck (normally 120s) + 60s orchestration margin. Poll and curl time count against monotonic deadline; curl capped at min(5,remaining) seconds; readiness timeout status 75 alone is eligible for one final posture check when health is starting, followed by a readyz request. Other recreate/image/env failures stay failed.",
+    "reason": "300s readiness + source-ingest health start bound 130s (120+10) + scheduler start bound 120s (90+30) + 50s orchestration/final readyz margin = 600s restore reserve, compatible with existing 10-minute steady-check step. Poll and curl time count against monotonic deadline; curl capped at min(5,remaining) seconds; readiness timeout status 75 alone is eligible for one final posture check when health is starting, followed by a readyz request. Other recreate/image/env failures stay failed.",
     "market_open_effect": "Default profile budget 900s plus restore 600s prevents new profiles at or after 00:30Z weekdays until market close; previously 00:35Z. 23:30Z primary remains admitted; a proposed 00:30Z backup requires RC2 scheduling/profile-budget disposition."
   },
   "memory": {
@@ -127,14 +127,19 @@
   "verification": {
     "before_change": "4 failed, 6 passed, 254 deselected: retirement, successful/rejected starting recheck, missing deadline helper; base source unchanged when run",
     "focused_after_change": "10 passed, 253 deselected",
-    "full_suites": "pending",
+    "full_suites": "timeout 900 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py -q: exit 1, 404 passed, 2 skipped, 6 existing exact-restore harness failures in 849.41s. Five extracted-helper tests lacked the new waiter; one shortened-sleep caller needed a monotonic test clock. These are not reported as passing.",
     "shell": "bash -n scripts/deploy_nonprod_vm.sh exit 0",
-    "storage": "python3 scripts/check_storage_manifest.py: exit 0, passed=true, 382 entries, no failures"
+    "storage": "python3 scripts/check_storage_manifest.py: exit 0, passed=true, 382 entries, no failures",
+    "environment_correction": "Initial full batch using an older /tmp/tw-official-first-venv was interrupted after 141 passed, 2 skipped and one missing-fastapi import failure (exit 2); not counted as passing. Final validation uses supervisor-provided PANTHEON_DEPENDENCY_PYTHON.",
+    "probe_negative": "python3 scripts/probe_tw_refresh_restore.py --run-id 46114700528 --merged-commit 287701d460de11ef8a2cc6b0323c45417d10d48f: expected exit 1, rejected failed restore and missing healthy outcome.",
+    "final_affected_cases": "After setting readiness to 300s and updating both exact-restore harnesses to injected clocks: timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py -q -k \"kept_entered_record or restore_readiness_timeout or injected_monotonic_deadline or manage_restore or restored_in_place_match or market_open_guard_window or broker_backfill_market_open_guard or exact_restore or restore_acceptance_probe\": exit 0, 39 passed, 373 deselected in 27.60s. Covers all six previously failing cases; all unaffected cases passed in the full batch. The timed-out old harness orphan was identified in this task worktree and terminated; no background validation left running.",
+    "scope": "Combined full-batch unaffected passes plus final focused passes validate the two requested files; no claim that the pre-fix full batch itself passed. Normal repository CI still runs on the final PR head."
   },
   "hosted_acceptance": {
     "status": "pending_post_merge",
     "run_id": null,
-    "procedure": "Read next dev-ref refresh via gh run list/view and raw job log API; confirm head contains merged repair, no bounded_runtime_stale_restore_failed, steady check passes, and read-only SSH finds no active record or restored_in_place receipt. Do not restore the operator-renamed record or trigger a write for read-only proof."
+    "procedure": "Read next dev-ref refresh via gh run list/view and raw job log API; confirm head contains merged repair, no bounded_runtime_stale_restore_failed, steady check passes, and read-only SSH finds no active record or restored_in_place receipt. Do not restore the operator-renamed record or trigger a write for read-only proof.",
+    "probe": "python3 scripts/probe_tw_refresh_restore.py --run-id <next-dev-refresh-run-id> --merged-commit <full-merged-task-SHA>"
   },
   "residual_findings": [
     {

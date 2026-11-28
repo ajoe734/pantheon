@@ -7156,8 +7156,8 @@ def test_manage_restore_uses_the_longer_deadline_and_preserves_timeout_status(tm
         run_dir.mkdir()
         proc, curls, sleeps = _run_manage_refresh_runtime_shell(run_dir, "restore", fail_attempts=failures)
         assert proc.returncode == expected, proc.stderr
-        assert len(curls) == (41 if failures == 40 else 84)
-        assert sleeps == ["5"] * (40 if failures == 40 else 84)
+        assert len(curls) == (41 if failures == 40 else 60)
+        assert sleeps == ["5"] * (40 if failures == 40 else 60)
 
 def test_restore_ready_wait_uses_an_injected_monotonic_deadline(tmp_path: Path) -> None:
     # Curl time counts too: simulate a 193-second cold start, then a wait that never becomes ready.
@@ -7176,7 +7176,7 @@ wait_for_source_ingest_restore_readiness
 """
         proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
         assert proc.returncode == expected, proc.stderr
-        assert int(clock.read_text()) == (205 if expected == 0 else 420)
+        assert int(clock.read_text()) == (205 if expected == 0 else 300)
 
 def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call() -> None:
     snapshot = {"snapshot_id": "s", "event_time": "2026-10-02T06:00:00Z", "calendar_evidence": {"market": "TWSE"}}

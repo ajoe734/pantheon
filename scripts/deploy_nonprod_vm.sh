@@ -3171,11 +3171,11 @@ source_ingest_restore_clock() {
 }
 
 # Run 46114700528: restore start 06:21:15Z, first ready 06:24:27Z (193s rounded up).
-# 420s leaves 227s margin. Curl time counts against the deadline; each call is capped at 5s.
+# 300s leaves about 107s margin. Curl time counts against the deadline; each call is capped at 5s.
 # Status 75 distinguishes readiness exhaustion from image/env/recreate failures.
 wait_for_source_ingest_restore_readiness() {
   local deadline now remaining call_bound pause
-  deadline=$(( $(source_ingest_restore_clock) + 420 ))
+  deadline=$(( $(source_ingest_restore_clock) + 300 ))
   while :; do
     now="$(source_ingest_restore_clock)"; remaining=$((deadline - now))
     (( remaining > 0 )) || return 75
