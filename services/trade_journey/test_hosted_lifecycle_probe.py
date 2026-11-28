@@ -8,7 +8,9 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import types
+from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 import uuid
 
@@ -428,6 +430,38 @@ def _publish(
     return root, rows
 
 
+class FakeClock:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+
+    def monotonic(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, delay: float) -> None:
+        self.elapsed += delay
+
+
+async def _execute_on_fake_clock(
+    *,
+    clock: FakeClock | None = None,
+    sleeper: Callable[[float], Awaitable[None]] | None = None,
+    **kwargs: Any,
+) -> tuple[int, dict]:
+    # Give every invocation its own deadline, including direct calls below.
+    clock = clock if clock is not None else FakeClock()
+
+    async def advance(delay: float) -> None:
+        if sleeper is not None:
+            await sleeper(delay)
+        await clock.sleep(delay)
+
+    return await probe.execute(
+        **kwargs,
+        monotonic=clock.monotonic,
+        sleeper=advance,
+    )
+
+
 def _execute(
     tmp_path: Path,
     *,
@@ -437,9 +471,11 @@ def _execute(
     mode: str = "natural",
     case_key: str | None = DEFAULT_TEST_CASE_KEY,
     case_source: Any | None = DEFAULT_CASE_SOURCE,
+    clock: FakeClock | None = None,
 ) -> tuple[int, dict]:
     return asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
+            clock=clock,
             source=FakeSource(len(rows), rows),
             projection_root=root,
             case_source=case_source,
@@ -491,7 +527,7 @@ def test_probe_correlates_from_relational_projection_snapshot(tmp_path):
     projection = ProjectionSnapshot(root)
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=BaselineSource(len(rows), rows),
             projection_root=None,
             projection_source=projection,
@@ -631,7 +667,7 @@ def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
         repairs += 1
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=BaselineSource(len(rows), rows),
             projection_root=root,
             case_source=DEFAULT_CASE_SOURCE,
@@ -658,7 +694,7 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
     source = IncrementalSource(baseline=100, high=108, rows=shifted_rows)
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=source,
             projection_root=root,
             case_source=DEFAULT_CASE_SOURCE,
@@ -687,7 +723,7 @@ def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
     source = IncrementalSource(baseline=999, high=208, rows=shifted_rows)
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=source,
             projection_root=root,
             case_source=DEFAULT_CASE_SOURCE,
@@ -730,7 +766,7 @@ def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):
     output = tmp_path / "timeout.json"
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(12, []),
             projection_root=tmp_path / "missing",
             case_source=DEFAULT_CASE_SOURCE,
@@ -745,6 +781,41 @@ def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):
     assert code == 1
     assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
     assert json.loads(output.read_text(encoding="utf-8")) == artifact
+
+
+def test_probe_deadline_expires_when_fake_sleep_advances_past_timeout(tmp_path):
+    root, rows = _publish(tmp_path)
+    source = FakeSource(len(rows), rows)
+    clock = FakeClock()
+
+    async def oversleep(_delay: float) -> None:
+        await clock.sleep(0.2)
+
+    code, artifact = asyncio.run(
+        _execute_on_fake_clock(
+            clock=clock,
+            sleeper=oversleep,
+            source=source,
+            projection_root=root,
+            case_source=DEFAULT_CASE_SOURCE,
+            expected_sha="deployed-sha",
+            output=tmp_path / "deadline.json",
+            timeout_seconds=0.1,
+            poll_seconds=0.001,
+            case_key=DEFAULT_TEST_CASE_KEY,
+        )
+    )
+
+    assert clock.monotonic() > 0.1
+    assert source.calls == 1  # The deadline prevents the next snapshot read.
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"] == {
+        "code": "no_complete_paper_aggregate",
+        "message": "no complete committed paper lifecycle aggregate matched",
+        "timed_out": True,
+    }
+    assert json.loads((tmp_path / "deadline.json").read_text()) == artifact
 
 
 def test_probe_rejects_deployment_sha_mismatch(tmp_path):
@@ -822,7 +893,7 @@ def test_probe_rejects_old_lifecycle_inherited_by_expected_deployment(tmp_path):
 
     output = tmp_path / "old-lifecycle.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=BaselineSource(9, rows),
             projection_root=root,
             case_source=DEFAULT_CASE_SOURCE,
@@ -872,7 +943,7 @@ def test_source_failure_writes_only_redacted_evidence(tmp_path):
     output = tmp_path / "failure.json"
 
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=BrokenSource(),
             projection_root=tmp_path / "missing",
             case_source=DEFAULT_CASE_SOURCE,
@@ -930,6 +1001,44 @@ def test_natural_mode_accepts_journey_ending_in_reconciliation_completed(tmp_pat
     root, rows = _publish(tmp_path, rows=rows)
     code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")
     assert code == 0
+    assert artifact["proof"]["events"][-1]["event_type"] == "reconciliation_completed"
+
+
+def test_natural_reconciliation_completed_survives_real_stall_before_projection(
+    tmp_path, monkeypatch
+):
+    rows = _natural_lifecycle_rows()
+    rows[-1]["payload"]["metadata"]["reconciliation_status"] = "ok"
+    root, rows = _publish(tmp_path, rows=rows)
+    clock = FakeClock()
+    snapshot = FakeSource.snapshot
+    projection_read = probe._current_projection
+    reads: list[str] = []
+
+    async def stalled_snapshot(source):
+        if source.calls == 0:
+            # Stall the baseline read before polling can reach the projection.
+            # The real probe deadline used to expire here on a busy runner.
+            before = clock.monotonic()
+            time.sleep(0.5)
+            assert clock.monotonic() == before
+            reads.append("stalled_baseline")
+        return await snapshot(source)
+
+    def tracked_projection_read(projection_root):
+        reads.append("projection")
+        return projection_read(projection_root)
+
+    monkeypatch.setattr(FakeSource, "snapshot", stalled_snapshot)
+    monkeypatch.setattr(probe, "_current_projection", tracked_projection_read)
+    code, artifact = _execute(
+        tmp_path, root=root, rows=rows, mode="natural", clock=clock
+    )
+
+    assert reads == ["stalled_baseline", "projection"]
+    assert clock.monotonic() == 0.05
+    assert code == 0
+    assert artifact["outcome"] == "passed"
     assert artifact["proof"]["events"][-1]["event_type"] == "reconciliation_completed"
 
 
@@ -2103,7 +2212,7 @@ def test_natural_probe_taiwan_calendar_evidence_passes_after_holiday(tmp_path):
     root, pub_rows = _publish(tmp_path, rows=rows)
     out = tmp_path / "out.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(len(pub_rows), pub_rows),
             projection_root=root,
             case_source=case_source,
@@ -2148,7 +2257,7 @@ def test_natural_probe_taiwan_snapshot_without_calendar_evidence_fails_calendar_
     root, pub_rows = _publish(tmp_path, rows=rows)
     out = tmp_path / "out.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(len(pub_rows), pub_rows),
             projection_root=root,
             case_source=case_source,
@@ -2181,7 +2290,7 @@ def test_natural_probe_taiwan_missed_regular_weekday_fails_stale(tmp_path):
     root, pub_rows = _publish(tmp_path, rows=rows)
     out = tmp_path / "out.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(len(pub_rows), pub_rows),
             projection_root=root,
             case_source=case_source,
@@ -2210,7 +2319,7 @@ def test_natural_probe_reports_last_natural_rejection_when_candidate_fails_stage
     root, pub_rows = _publish(tmp_path, rows=rows)
     out = tmp_path / "out.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(len(pub_rows), pub_rows),
             projection_root=root,
             case_source=case_source,
@@ -2272,7 +2381,7 @@ def test_natural_probe_taiwan_weekend_original_time_passes_after_caller_repair(t
     root, pub_rows = _publish(tmp_path, rows=rows)
     out = tmp_path / "out.json"
     code, artifact = asyncio.run(
-        probe.execute(
+        _execute_on_fake_clock(
             source=FakeSource(len(pub_rows), pub_rows),
             projection_root=root,
             case_source=case_source,

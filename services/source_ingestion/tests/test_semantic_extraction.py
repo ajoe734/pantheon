@@ -960,3 +960,45 @@ class TestSemanticExtractionClientBoundedFailures:
         assert split_counts["validation"] == 42
         assert split_counts["holdout"] == 42
 
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("unconfigured", "transport_unconfigured"),
+    ("policy_read", "direct_policy_unavailable"),
+    ("policy_interface", "direct_policy_denied"),
+    ("policy_denied", "direct_policy_denied"),
+    ("admission", "admission_denied"),
+    ("input_budget", "input_budget_exceeded"),
+])
+def test_unsent_local_and_direct_policy_boundaries(case, reason, monkeypatch):
+    from unittest.mock import Mock
+    from services.source_ingestion.semantic_extraction_client import UNSENT_CALL_REASONS
+    for name in ("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "OPENCLAW_GATEWAY_ADAPTER_URL", "PANTHEON_OPENCLAW_ADAPTER_URL"):
+        monkeypatch.delenv(name, raising=False)
+    provider = Mock()
+    provider._gateway_call.side_effect = RuntimeError("gateway unreachable")
+    if case == "policy_denied":
+        provider._gateway_call.side_effect = None
+        provider._gateway_call.return_value = {"valid": True, "config": {"agents": {"list": []}}}
+    if case == "policy_interface":
+        del provider._gateway_call
+    kw = {"provider": provider} if case.startswith("policy_") else {}
+    if case == "input_budget":
+        kw["hypothesis_token_limits"] = {"max_input_tokens": 1, "max_output_tokens": 10}
+    client = SemanticExtractionClient(**kw)
+    req = _base_req(task_type=ExtractionTaskType.HYPOTHESIS_CARD)
+    if case == "admission":
+        req = _base_req(task_type=ExtractionTaskType.HYPOTHESIS_CARD, text="", license_scope="")
+    result = client.extract(req)
+    assert result.unsent_reason == reason and reason in UNSENT_CALL_REASONS
+    assert SemanticExtractionResult.from_dict(result.to_dict()).unsent_reason == reason
+    provider.invoke_structured.assert_not_called()
+
+
+def test_unsent_allowlist_is_exhaustive_for_checked_boundaries():
+    from services.source_ingestion.semantic_extraction_client import UNSENT_CALL_REASONS
+    assert set(UNSENT_CALL_REASONS) == {
+        "dns_failure", "connection_refused", "adapter_policy_unavailable",
+        "direct_policy_unavailable", "direct_policy_denied", "transport_unconfigured",
+        "admission_denied", "input_budget_exceeded",
+    }

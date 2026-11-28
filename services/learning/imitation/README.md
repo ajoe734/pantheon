@@ -1,6 +1,10 @@
 # services/learning/imitation
 
-**Purpose**: Integrate governed trader-behavior cloning workflows into Pantheon using the upstream `imitation` library.
+> **Runtime Status (IMITATION-TRADER-SHADOW-COMPARISON-20261127 — NOT RUN AS A SERVICE):**
+> `services/learning/imitation/` is retained **solely as an offline LP-002 OSS package-pin and behavior-cloning smoke harness**. Its `imitation-worker` entry has been removed from `cloudbuild.yaml`, and no Docker Compose or hosted service runs `services/learning/imitation/worker.py`.
+> All production and hosted trader behaviour imitation runs in the existing policy-learning imitation loop (`services/policy-learning/main.py` and `services/policy-learning/scheduler_worker.py` via `policy-learning-svc` and `policy-learning-shadow-eval-scheduler`).
+
+**Purpose**: Offline LP-002 OSS integration smoke harness for governed trader-behavior cloning using the upstream `imitation` library.
 
 **Task**: LP-002  
 **Owner**: Codex  

@@ -1,0 +1,124 @@
+{
+  "task_id": "L2-UNSENT-CALLS-NOT-COUNTED-AND-ADAPTER-DOWN-BACKOFF-20261127",
+  "class": "RC2",
+  "parent_work_package": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125",
+  "owner": "Codex2",
+  "reviewer": "Claude2",
+  "target_branch": "dev",
+  "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+  "source_anchors": [
+    "1fe94533ff92589347976317f424f0b2bde79acd",
+    "cf64ad1327e893cdbe9b9e593f8ac6feeccd8d87",
+    "6a30ca66e4c1402d58df1e2e1f4fb2c20f8a83e4"
+  ],
+  "delivery": {
+    "source": "PR #7998 refreshed with current dev; artifact contract repaired by Human/Ops; awaiting renewed exact-head handoff and Claude2 independent review; no approval or merge claimed",
+    "hosted": "pending deployment and next Root switch; no hosted proof claimed",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7998"
+  },
+  "root_cause": "The ledger reserved spend before dispatch but client errors lost transport-phase evidence; the worker continued the claimed batch during adapter outage.",
+  "implementation": {
+    "classification": "UNSENT_CALL_REASONS in semantic_extraction_client.py is the single exhaustive allowlist. DNS/refused socket errors qualify only inside connect(); adapter policy refusal requires the top-level structured error_code, never substring matching. Direct pre-invoke policy, absent transport, admission and input-budget refusals are explicitly tracked too. Sent/ambiguous errors, streaming timeout, provider errors, billing errors and process crashes remain spent.",
+    "ledger": "Reserve atomically before call (cap and per-source limits remain enforced); proven unsent outcomes atomically decrement original UTC-day calls.n, source attempts and distinct-source count and increment calls.unsent, appending one reason event. No retroactive changes to historical counted calls. Compiler proposer refunds only its own reservation; paid cached cards remain spent.",
+    "worker": "When L2 is enabled claim one at a time (excluding already visited jobs), stop after the first unsent adapter failure in either phase even following a successful call; defer the affected job with extraction_unavailable and return its queue attempt. Remaining records are unclaimed; next run_pending resets the tick hold and recovers.",
+    "read_only_reporting": "ExtractionLedger.summary().calls and calls_today() are counted spend; summary().unsent_calls is separate. Owner discovery_summary forwards unsent_calls into existing BFF discovery_summary.llm_calls, and discovery-pipeline hypothesis_cards reports unsent_calls_today independently. Legacy readers without the column report unknown (None), not invented zero."
+  },
+  "validation": [
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_semantic_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_discovery_summary.py services/source_ingestion/tests/test_demand_priority.py acceptance/test_discovery_pipeline_day.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "398 passed, 15 warnings in 132.71s; exit 0 after integrating dev 9cf0aeff70d7611dda3d5bca4f5f460147aad003 and resolving the discovery-summary composition conflict."
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed after dev integration; 380 entries; no failures; exit 0"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed after dev integration and evidence updates; exit 0"
+    }
+  ],
+  "regression_proof": [
+    "Actual socket connection refusal and resolver failure through the real HTTP client refund spend; ConnectionRefusedError raised after request() and an actual partial streaming response timeout remain counted.",
+    "Real client HTTP -> local HTTP bridge -> real FastAPI adapter structured route -> upstream boundary: policy RPC failure and policy deadline exhaustion never invoke provider and refund; provider 503, provider 504 and a provider message containing the policy marker remain counted.",
+    "Adapter-down tick with 10 queued records claims 1 and records 1 deferral; no queue or ledger attempt is spent. Also tested success followed by outage in the same tick. Healthy next tick processes every remaining record.",
+    "Compiler proposer policy failure refunds its reservation while retaining an earlier paid card call.",
+    "24 real parallel HTTP clients refund without losing another source spend; original-day refund survives UTC midnight; migration preserves historical n; 10,080 unsent-event cap preserves other outcome history.",
+    "Owner read and discovery probe report counted/unsent separately; each checked-in unsent reason has boundary coverage; typed result round-trip preserves the reason."
+  ],
+  "runtime_budget": {
+    "cadence": "Existing 60-second distillation tick; first unsent adapter failure stops it, <=1 outage attempt/event per tick (~1440/day). Input-budget refusals can additionally emit one event per processed record within the configured existing batch limit.",
+    "counter": "One new integer column calls.unsent in each existing daily calls row; no new daily rows, database file, table or recurring job; <=8 bytes extra per existing row.",
+    "events": "Use existing events with a partial unsent-only index. Source <=256 and detail <=500 characters: ~0.8 KB typical / <=3.2 KB UTF-8 payload per event, ~1 MiB typical / <=4.6 MB payload/day for persistent outage.",
+    "cap_and_cleanup": "At most 10080 unsent events (~8 MB typical / <=33 MB UTF-8 payload plus existing SQLite overhead), oldest pruned atomically on each unsent write. Partial index <=10080 keys; SQLite reuses freed pages. Original non-unsent history remains under RC3 WP3.1.",
+    "manifest": "docs/operations/storage-manifest.json entry l2_extraction_ledger.sqlite::unsent_budget"
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "authority": "Next normal Root deployment/switch, after independent review and supervisor merge; read-only observations only, no induced outage or ledger rewrite.",
+    "procedure": [
+      "Verify hosted manifest and every expected steady service at the deployed exact version; record the real release_switched_at, not process start or an inferred cutoff.",
+      "Around that next normal switch collect existing adapter/controller logs and read the existing ledger read-only. Correlate DNS/refused/policy failure events by timestamp; each must have outcome=unsent and a typed reason; no new corresponding counted unavailable failure is expected for a proven pre-model refusal.",
+      "Read SELECT day,n,unsent,cap,sources FROM calls WHERE day=date('now'); compare before/after observations for this switch; confirmed unsent failures increase unsent only, n stays <=cap (default 400). Historical already-spent cap is not reset by deployment.",
+      "Read recent existing events using id range and outcome=unsent, and the single affected queue row: extraction_unavailable with unchanged attempts; unaffected pending rows remain unclaimed. Next normal tick after adapter recovers resumes work.",
+      "Run the existing read-only discovery pipeline acceptance with configured ACCEPTANCE_BFF_URL / viewer credentials: python3 -m acceptance.discovery_pipeline_day; retain JSON showing hypothesis_cards.values.calls_today and unsent_calls_today separately. Other stage failures do not prove this accounting change failed or passed."
+    ]
+  },
+  "residual_findings": [
+    {
+      "class": "RC2",
+      "finding": "Existing historical counted failures lack phase evidence sufficient for safe retroactive refunds. This change preserves them; an already exhausted day remains exhausted until the next UTC window.",
+      "disposition": "Recorded on owning RC2 spend-counting row; coordinator must carry this limit into hosted acceptance."
+    },
+    {
+      "class": "RC2",
+      "finding": "Existing note_call_failure puts timeout/billing/unavailable subtotals on completion day while calls.n reserves on start day for a call spanning UTC midnight. This does not erase or exceed counted spend.",
+      "disposition": "Recorded on the same RC2 spend-counting row for follow-through; outside this unsent-refund scope."
+    },
+    {
+      "class": "RC3",
+      "finding": "Existing calls day rows and non-unsent events/cards lack a verified global retention cap; the added unsent events are independently capped.",
+      "disposition": "Existing RC3 WP3.1 writer obligation retained in storage manifest; no claim that the whole ledger is bounded."
+    },
+    {
+      "class": "RC2",
+      "finding": "Coordinator-provided read-only hosted observation at 2026-11-28 01:00Z: 30 L2 records are already closed attempts_exhausted with an unsent last reason (28 name resolution, 2 OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE). This worker did not independently repeat the hosted read.",
+      "disposition": "Coordinator follow-up must own any governed reopening of these existing terminal records; no queue repair or retroactive spend rewrite is included in PR #7998."
+    }
+  ],
+  "handoff_gate": {
+    "status": "artifact_contract_resolved_pending_rehandoff",
+    "attempted_head": "479737f0f817feb2645117b8a4efba1408e53d8f",
+    "rejection": "changed file 'docs/operations/storage-manifest.json' is outside the task artifact contract for repository 'pantheon'",
+    "required_artifacts": [
+      {
+        "path": "pantheon:services/source_ingestion/semantic_extraction.py",
+        "reason": "typed unsent reason must survive client result serialization"
+      },
+      {
+        "path": "pantheon:services/source_ingestion/hypothesis_compiler.py",
+        "reason": "proposer shares the same daily ledger and must refund its own proven-unsent reservation"
+      },
+      {
+        "path": "pantheon:services/source_ingestion/discovery_summary.py",
+        "reason": "read-only hosted owner summary must expose the separate unsent counter to the existing probe"
+      },
+      {
+        "path": "pantheon:docs/operations/storage-manifest.json",
+        "reason": "repository runtime budget rule requires registration of this changed persistent ledger writer"
+      }
+    ],
+    "recovery": "Human/Ops must add these four paths using governed artifact-contract while the task is blocked; owner then reopens and repeats handoff with the current PR/head/committed manifest. No direct JSON edits or command-root patching.",
+    "authority_evidence": "scripts/ai_status.py::command_artifact_contract explicitly checks current_actor() == Human/Ops; Codex2 cannot revise it. Existing owner/runtime authority is preserved.",
+    "resolution": "Human/Ops added all four required artifacts via governed artifact-contract on 2026-11-28 and reopened the task at 03:39:55Z; verified by Codex2 through the governed show command. New exact-head handoff must succeed before any review binding is claimed."
+  },
+  "integration": {
+    "method": "Merged dev into published task branch, preserving history for normal non-force publication.",
+    "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+    "anchor": "1fe94533ff92589347976317f424f0b2bde79acd",
+    "conflict_resolution": "discovery_summary.py composes upstream distinct_sources/calls_per_source with the existing task unsent_calls field. All other dev changes merged automatically.",
+    "scope": "The four added artifact paths retain the changes in 8f8c567f6, with only the discovery-summary query composition needed for current dev."
+  }
+}

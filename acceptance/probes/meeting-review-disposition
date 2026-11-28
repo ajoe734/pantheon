@@ -33,6 +33,24 @@ REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIE
 MEETINGS_PATH = "/bff/management/meetings?page_size=200"
 INBOX_MEETINGS_PATH = "/bff/management/human-inbox?source_type=meeting&page_size=200"
 MAX_PAGES = 20
+MAX_MEETING_SUBSURFACES = 4
+MAX_SUBSURFACE_REASON_CHARS = 120
+
+
+def _meeting_surface_failure(surface: dict) -> str:
+    failure = f"inbox_meetings_surface_{surface.get('status')}:{surface.get('reason') or 'unknown'}"
+    nested = surface.get("surfaces")
+    if not isinstance(nested, dict):
+        return failure
+    details: list[str] = []
+    for name, sub_surface in nested.items():
+        if not isinstance(sub_surface, dict):
+            continue
+        reason = str(sub_surface.get("reason") or "unknown")[:MAX_SUBSURFACE_REASON_CHARS]
+        details.append(f"{name}:{sub_surface.get('status') or 'unknown'}:{reason}")
+        if len(details) == MAX_MEETING_SUBSURFACES:
+            break
+    return failure + (";sub_surfaces=" + ";".join(details) if details else "")
 
 
 def _unwrap_data(body: object) -> dict:
@@ -187,7 +205,7 @@ def check(fetch) -> dict:
     inbox_meta = inbox_body.get("meta") if isinstance(inbox_body, dict) and isinstance(inbox_body.get("meta"), dict) else {}
     meetings_surface = (inbox_meta.get("surfaces") or {}).get("meetings") if isinstance(inbox_meta.get("surfaces"), dict) else {}
     if isinstance(meetings_surface, dict) and str(meetings_surface.get("status") or "").lower() in {"degraded", "unavailable"}:
-        failures.append(f"inbox_meetings_surface_{meetings_surface.get('status')}:{meetings_surface.get('reason') or 'unknown'}")
+        failures.append(_meeting_surface_failure(meetings_surface))
 
     inbox_items = _rows(inbox_body)
     inbox_by_meeting: dict[str, dict] = {}

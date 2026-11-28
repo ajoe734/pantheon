@@ -47,7 +47,7 @@ def _card(text: str = BODY, span: str = CLAIM_SPAN, sid: str = "src-1", **over: 
     card = {
         "claim": "Revenue momentum predicts next-month returns",
         "mechanism": "Underreaction to fundamentals",
-        "signal_inputs": ["monthly_revenue_yoy"],
+        "signal_inputs": ["tw_monthly_revenue.yoy"],
         "rule_sketch": "rank by monthly_revenue_yoy, hold top decile",
         "horizon": "1m",
         "universe": "TWSE listed",
@@ -202,7 +202,12 @@ def test_contract_file_matches_code():
 
 def _prediction_recording():
     path = Path(__file__).parent / "fixtures/hypothesis_predictions_recorded.json"
-    return json.loads(path.read_text())
+    recording = json.loads(path.read_text())
+    # Replay the hand-authored prediction fixture with a governed top-level input
+    # for every consumer, including Research's card-to-admission integration tests.
+    # Bare legacy names remain covered by the fail-closed catalogue tests below.
+    recording["response"]["output"]["structured_data"]["hypothesis_card"]["signal_inputs"] = ["tw_monthly_revenue.yoy"]
+    return recording
 
 
 def _screen_entry_recording():
@@ -273,6 +278,8 @@ def test_predictions_survive_real_worker_entrypoint_and_are_catalogue_checked(tm
     worker, _, store, _ = _worker(tmp_path, t)
     assert _run(worker, _source(body=t.recording["stored_text"])).created == 1
     card = _card_with_origin(store.list_all()[0])
+    assert card["signal_inputs"] == ["tw_monthly_revenue.yoy"]
+    assert card["testability"] == "testable"
     assert [p["testability"] for p in card["predictions"]] == [
         "testable", "testable", "needs_data:unlisted_orders", "needs_data:tw_monthly_revenue",
     ]
@@ -863,8 +870,10 @@ def test_card_input_limit_is_checked_on_the_prompt_before_any_call(tmp_path):
     worker.enqueue_from_source_record(_source("src-1"))
     worker.run_pending()
     assert calls == []
-    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "failed"]
+    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "unsent"]
     assert "no model call made" in event["detail"] and "usage" not in event
+    assert event["detail"].startswith("input_budget_exceeded:")
+    assert ledger.calls_today() == 0 and ledger.summary()["unsent_calls"] == 1
 
 
 def test_paid_card_answer_is_not_discarded_for_an_unstated_input_limit(tmp_path):
@@ -2136,3 +2145,375 @@ def test_hypothesis_card_ritual_markers_and_reattempt_match_under_clean_stdlib_i
         timeout=30,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# Hosted input strings copied from the task's 2026-11-28 00:00–01:00Z source evidence.
+HOSTED_CATALOGUE_INPUTS = [
+    ("news-udn-9904948", ["tw_institutional_flows.net_buy_value", "taiex_daily.close", "taiex_daily.low"], "taiex_daily"),
+    ("news-udn-9904916", ["corporate_actions.split_ratio", "etf_nav.nav_per_unit", "security_reference.board_lot_size", "depository_positions.first_time_small_holder_count"], "corporate_actions"),
+    ("news-udn-9905169", ["fundamentals.quarterly_revenue", "fundamentals.quarterly_net_income"], "fundamentals"),
+]
+
+
+def test_prompt_carries_shared_complete_catalogue_within_input_budget():
+    from services.registry.factor_rule import list_feature_definitions, BUILT_IN_PRICE_VOLUME_FIELDS
+    from services.source_ingestion.hypothesis_compiler import catalogue_summary
+    from services.source_ingestion.semantic_extraction import (
+        estimate_prompt_tokens, HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT,
+    )
+
+    prompt = hypothesis_card.build_hypothesis_prompt(
+        "股" * hypothesis_card.MAX_PROMPT_TEXT_CHARS, source_record_id="s" * 256, origin="news",
+    )
+    compact = prompt.split("CATALOGUE: ", 1)[1].split("\n", 1)[0]
+    catalogue = json.loads(compact)
+    assert catalogue == {k: catalogue_summary()[k] for k in ("datasets", "builtin_fields")}
+    for definition in list_feature_definitions():
+        assert definition.field in catalogue["datasets"][definition.dataset]
+    assert set(catalogue["builtin_fields"]) == BUILT_IN_PRICE_VOLUME_FIELDS
+    schema = json.dumps(hypothesis_card.hypothesis_card_model_schema(), ensure_ascii=False)
+    assert estimate_prompt_tokens(prompt, schema) < HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT
+    assert "dataset.field" in prompt and "no catalogue dataset" in prompt
+
+
+@pytest.mark.parametrize("sid,inputs,missing", HOSTED_CATALOGUE_INPUTS + [
+    ("src-1", ["tw_monthly_revenue.yoy", "tw_price_daily.close"], ""),
+    ("src-1", ["monthly_revenue_yoy"], "unparsable_signal_input"),
+    ("src-1", ["tw_price_daily."], "unparsable_signal_input"),
+    ("src-1", ["bad name.close"], "unparsable_signal_input"),
+    ("src-1", ["tw_price_daily.unknown_field"], "tw_price_daily"),
+])
+def test_top_level_testability_is_checked_against_catalogue(tmp_path, sid, inputs, missing):
+    transport = _Transport({"is_abstained": False, "hypothesis_card":
+                            _card(sid=sid, testability="testable", signal_inputs=inputs)})
+    worker, _, store, _ = _worker(tmp_path, transport)
+    assert _run(worker, _source(sid)).created == 1
+    card = _card_with_origin(store.list_all()[0])
+    assert card["testability"] == (f"needs_data:{missing}" if missing else "testable")
+
+
+@pytest.mark.parametrize("quoted,normalized_match", [("Ａ B", True), ("fabricated", False)])
+def test_citation_rejection_keeps_trace_in_ledger(tmp_path, quoted, normalized_match):
+    body = "A   B market revenue rises"
+    span = {"source_record_id": "src-1", "start": 0, "end": len(quoted), "exact_text": quoted}
+    transport = _Transport({"is_abstained": False, "hypothesis_card": _card(cited_spans=[span])})
+    # Use the extractor directly: relevance routing is unrelated to citation validation.
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    result = extractor.extract(_source(body=body))
+    assert result.status == "rejected"
+    detail = ledger.events("src-1")[0]["detail"]
+    assert f"normalized_match={str(normalized_match).lower()}; exact_text={quoted}" in detail
+
+
+def test_citation_diagnostic_quote_is_bounded():
+    quoted = "Z" * 120
+    with pytest.raises(hypothesis_card.CardRejected) as exc:
+        hypothesis_card.verify_cited_spans({"cited_spans": [{
+            "source_record_id": "s", "start": 0, "end": 120, "exact_text": quoted,
+        }]}, text="a" * 200, source_record_id="s")
+    assert exc.value.detail.endswith("exact_text=" + quoted[:80])
+
+
+@pytest.fixture
+def l2_http_adapter(monkeypatch):
+    """Real client HTTP -> real adapter route; only the upstream boundary is fake."""
+    import http.server
+    import importlib.util
+    import sys
+    import threading
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+
+    adapter_dir = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
+    monkeypatch.syspath_prepend(str(adapter_dir))
+    name = "l2_unsent_adapter_main"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, adapter_dir / "main.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    adapter = sys.modules[name]
+    monkeypatch.setattr(adapter, "_ASSISTANT_SERVICE_TOKEN", "l2-test-token")
+    state = {"mode": "policy_down", "requests": 0, "provider_calls": 0}
+
+    def policy(*args, **kwargs):
+        if state["mode"] == "policy_down":
+            raise adapter.GatewayOpenClawProviderError(
+                "connection refused", status_code=503, error_code="OPENCLAW_GATEWAY_UNAVAILABLE",
+            )
+        if state["mode"] == "policy_expired":
+            time.sleep(0.02)
+        return {"valid": True, "config": {"agents": {
+            "list": [{"id": adapter.OPENCLAW_STRUCTURED_AGENT_ID,
+                      "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}],
+            "defaults": {"cliBackends": {"claude-cli": {
+                "args": adapter._CLAUDE_CLI_TOOLSEARCH_ARGS,
+                "resumeArgs": adapter._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS,
+            }}},
+        }}}
+
+    def invoke(*args, **kwargs):
+        state["provider_calls"] += 1
+        if state["mode"] == "provider_error":
+            raise adapter.GatewayOpenClawProviderError(
+                "provider failed after send", status_code=503, error_code="OPENCLAW_PROVIDER_ERROR",
+            )
+        if state["mode"] == "provider_timeout":
+            raise adapter.GatewayOpenClawProviderError(
+                "stream timed out", status_code=504, error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
+        if state["mode"] == "spoof_marker":
+            raise adapter.GatewayOpenClawProviderError(
+                "provider text OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE", status_code=503,
+                error_code="OPENCLAW_PROVIDER_ERROR",
+            )
+        if state.get("fail_after_success") == state["provider_calls"]:
+            state["mode"] = "policy_down"
+        return SimpleNamespace(to_dict=lambda: {"output": {"structured_data": {
+            "is_abstained": True, "hypothesis_card": None, "abstention_reason": "No testable mechanism",
+        }}})
+
+    monkeypatch.setattr(adapter._OPENCLAW_AGENT_PROVIDER, "_gateway_call", policy)
+    monkeypatch.setattr(adapter._OPENCLAW_AGENT_PROVIDER, "invoke_structured", invoke)
+    with TestClient(adapter.app) as upstream:
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                state["requests"] += 1
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                response = upstream.post(self.path, content=body, headers=dict(self.headers))
+                self.send_response(response.status_code)
+                self.send_header("Content-Length", str(len(response.content)))
+                self.end_headers()
+                self.wfile.write(response.content)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield SemanticExtractionClient(
+                adapter_url=f"http://127.0.0.1:{server.server_port}", service_token="l2-test-token",
+            ), state, adapter
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("mode,counted", [
+    ("policy_down", False), ("policy_expired", False),
+    ("provider_error", True), ("provider_timeout", True), ("spoof_marker", True), ("healthy", True),
+])
+def test_unsent_classification_through_real_adapter_route(tmp_path, monkeypatch, l2_http_adapter, mode, counted):
+    client, state, adapter = l2_http_adapter
+    state["mode"] = mode
+    if mode == "policy_expired":
+        monkeypatch.setattr(adapter._OPENCLAW_AGENT_PROVIDER, "_timeout", 0.01)
+    ledger = ExtractionLedger(tmp_path / "ledger.sqlite", daily_cap=1)
+    outcome = HypothesisExtractor(client, ledger).extract(_source(), digest="v1")
+    assert ledger.calls_today() == int(counted)
+    assert ledger.summary()["unsent_calls"] == int(not counted)
+    assert ledger.record_attempts("src-1")["today"] == int(counted)
+    assert ledger.summary()["distinct_sources"] == int(counted)
+    assert ledger.can_attempt("src-2") == ("daily_cap" if counted else "reserved")
+    assert state["provider_calls"] == int(counted)
+    event = ledger.events()[0]
+    if counted:
+        assert outcome.status in {"unavailable", "no_hypothesis"}
+        assert event["outcome"] != "unsent"
+    else:
+        assert outcome.status == "extraction_unavailable"
+        assert event["outcome"] == "unsent"
+        assert event["detail"].startswith("adapter_policy_unavailable:")
+
+
+@pytest.mark.parametrize("failure", ["dns_failure", "connection_refused", "after_send_refused", "stream_timeout"])
+def test_unsent_socket_phase_is_evidence_not_error_text(tmp_path, monkeypatch, failure):
+    import http.client
+    import socket
+    import threading
+    import http.server
+
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))  # reserved but not listening: real connection refusal
+    url = f"http://127.0.0.1:{held.getsockname()[1]}"
+    server = thread = None
+    if failure == "dns_failure":
+        original = socket.getaddrinfo
+        def resolve(host, *args, **kwargs):
+            if host == "unsent.invalid":
+                raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+            return original(host, *args, **kwargs)
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        url = "http://unsent.invalid"
+    elif failure in {"after_send_refused", "stream_timeout"}:
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Length", "100")
+                self.end_headers()
+                self.wfile.write(b'{')
+                self.wfile.flush()
+                time.sleep(0.1)
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_port}"
+        if failure == "after_send_refused":
+            original_request = http.client.HTTPConnection.request
+            def request(conn, *args, **kwargs):
+                original_request(conn, *args, **kwargs)
+                raise ConnectionRefusedError("late connection refused after request sent")
+            monkeypatch.setattr(http.client.HTTPConnection, "request", request)
+    try:
+        client = SemanticExtractionClient(adapter_url=url, hypothesis_deadline_seconds=0.03)
+        ledger = ExtractionLedger(tmp_path / "ledger.sqlite", daily_cap=1)
+        out = HypothesisExtractor(client, ledger).extract(_source(), digest="v1")
+        unsent = failure in {"dns_failure", "connection_refused"}
+        assert ledger.calls_today() == int(not unsent)
+        assert ledger.summary()["unsent_calls"] == int(unsent)
+        assert ledger.record_attempts("src-1")["total"] == int(not unsent)
+        assert out.status == ("extraction_unavailable" if unsent else "unavailable")
+        if unsent:
+            assert ledger.events()[0]["detail"].startswith(failure + ":")
+    finally:
+        held.close()
+        if server:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("successes", [0, 1])
+def test_adapter_outage_stops_claiming_once_and_next_tick_recovers(tmp_path, l2_http_adapter, monkeypatch, successes):
+    client, state, _ = l2_http_adapter
+    if successes:
+        state["mode"] = "healthy"
+        state["fail_after_success"] = successes
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite")
+    ledger = ExtractionLedger(tmp_path / "ledger.sqlite")
+    worker = DistillationWorker(queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"),
+                                hypothesis_extractor=HypothesisExtractor(client, ledger))
+    for n in range(10):
+        worker.enqueue_from_source_record(_source(sid=f"src-{n}"))
+    claims = []
+    claim_due = queue.claim_due
+    def claim(**kwargs):
+        jobs = claim_due(**kwargs)
+        claims.extend(j.job_id for j in jobs)
+        return jobs
+    monkeypatch.setattr(queue, "claim_due", claim)
+    first = worker.run_pending(limit=10)
+    assert len(claims) == state["requests"] == 1 + successes
+    assert first.deferred == 1 and first.processed == 1 + successes
+    assert first.failed == first.extraction_retried == 0
+    assert len(ledger.events()) == 1 + successes and ledger.summary()["unsent_calls"] == 1
+    assert ledger.calls_today() == successes
+    assert sum(j.attempts for j in queue.list_all()) == successes
+    assert queue.metrics()["deferred"] == 1
+    assert sum(j.status == "pending" for j in queue.list_all()) == 9 - successes
+    state["mode"] = "healthy"
+    second = worker.run_pending(limit=10)
+    assert second.processed == second.skipped == 10 - successes
+    assert ledger.calls_today() == 10 and ledger.summary()["unsent_calls"] == 1
+    assert state["provider_calls"] == 10
+    assert {j.attempts for j in queue.list_all()} == {1}
+
+
+def test_unsent_compiler_proposer_refunds_its_own_reservation(tmp_path, l2_http_adapter):
+    from services.source_ingestion.hypothesis_compiler import CompilerStore, HypothesisCompiler, client_proposer
+    client, state, _ = l2_http_adapter
+    ledger = ExtractionLedger(tmp_path / "ledger.sqlite")
+    # A previously paid and cached card remains counted when only the proposer is unavailable.
+    assert ledger.reserve_call("src-1")
+    compiler = HypothesisCompiler(client_proposer(client), CompilerStore(), ledger=ledger)
+    card = _card(testability="testable")
+    out = compiler.compile(card, source_id="src-1", digest="v1")
+    assert out.status == "extraction_unavailable"
+    assert ledger.calls_today() == ledger.record_attempts("src-1")["total"] == 1
+    assert ledger.summary()["distinct_sources"] == 1
+    assert ledger.summary()["unsent_calls"] == 1 and state["provider_calls"] == 0
+
+
+def test_unsent_refund_uses_reservation_day_across_midnight(tmp_path, monkeypatch):
+    import socket
+    import sqlite3
+    day = ["2026-11-27"]
+    monkeypatch.setattr(hypothesis_card, "_today", lambda: day[0])
+    def resolve(*args, **kwargs):
+        day[0] = "2026-11-28"
+        raise socket.gaierror(socket.EAI_NONAME, "not found")
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    path = tmp_path / "ledger.sqlite"
+    ledger = ExtractionLedger(path)
+    outcome = HypothesisExtractor(SemanticExtractionClient(adapter_url="http://unsent.invalid"), ledger).extract(_source())
+    assert outcome.status == "extraction_unavailable"
+    assert ledger.record_attempts("src-1")["total"] == 0
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT day, n, unsent, sources FROM calls").fetchall() == [("2026-11-27", 0, 1, 0)]
+
+
+def test_unsent_migration_and_event_cap_preserve_spent_history(tmp_path):
+    import sqlite3
+    path = tmp_path / "ledger.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE calls(day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+        conn.execute("INSERT INTO calls VALUES(?, 96)", (hypothesis_card._today(),))
+    ledger = ExtractionLedger(path)
+    assert ledger.calls_today() == 96 and ledger.summary()["unsent_calls"] == 0
+    assert ledger.reserve_call("src-1")
+    ledger.record("src-old", "card", "history retained")
+    with sqlite3.connect(path) as conn:
+        conn.executemany("INSERT INTO events(ts,source_id,outcome,detail) VALUES('2026-11-27','s','unsent','dns_failure')",
+                         [()] * 10080)
+    ledger.note_unsent("src-1", day=ledger.utc_day(), reason="dns_failure", detail="not found")
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE outcome='unsent'").fetchone()[0] == 10080
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE outcome='card'").fetchone()[0] == 1
+    assert ledger.calls_today() == 96 and ledger.summary()["unsent_calls"] == 1
+
+
+def test_unsent_parallel_clients_refund_without_losing_other_spend(tmp_path):
+    import socket
+    from concurrent.futures import ThreadPoolExecutor
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    url = f"http://127.0.0.1:{held.getsockname()[1]}"
+    path = tmp_path / "ledger.sqlite"
+    ledger = ExtractionLedger(path)
+    assert ledger.reserve_call("paid-source")
+    def run(n):
+        local = ExtractionLedger(path)
+        return HypothesisExtractor(SemanticExtractionClient(adapter_url=url), local).extract(_source(f"src-{n}"))
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(run, range(24)))
+        assert {o.status for o in outcomes} == {"extraction_unavailable"}
+        assert ledger.calls_today() == ledger.summary()["distinct_sources"] == 1
+        assert ledger.summary()["unsent_calls"] == 24
+        assert ledger.record_attempts("paid-source")["total"] == 1
+    finally:
+        held.close()
+
+
+def test_owner_read_reports_unsent_separately_without_writing(tmp_path, l2_http_adapter):
+    from datetime import datetime, timezone
+    from services.source_ingestion.discovery_summary import read_discovery_summary
+    client, _, _ = l2_http_adapter
+    ledger_path = tmp_path / "ledger.sqlite"
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite")
+    ledger = ExtractionLedger(ledger_path)
+    HypothesisExtractor(client, ledger).extract(_source())
+    summary = read_discovery_summary(
+        queue_path=queue.path, tenant_id="default", ledger_path=ledger_path,
+        now=datetime.now(timezone.utc).timestamp(), release_switched_at="2026-11-27T00:00:00Z",
+    )
+    assert summary["llm_calls"]["status"] == "ok"
+    assert summary["llm_calls"]["calls"] == 0
+    assert summary["llm_calls"]["unsent_calls"] == 1

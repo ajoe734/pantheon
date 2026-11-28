@@ -210,13 +210,43 @@ def test_detail_dto_keeps_full_rich_source_health(real_service):
     assert len(json.dumps(full)) > 250_000
 
 
-def test_list_cpu_drops_at_least_70_percent(real_service):
+def test_list_projection_avoids_rich_health_per_row(real_service, monkeypatch):
+    """Count avoided rich work on 160 hosted-shape rows, without timing gates.
+
+    Set PANTHEON_PERSONA_LIST_CPU_MEASURE=1 and run pytest with -s to print
+    informational CPU timings for the original comparison. Unset by default
+    (including CI); measurements never decide whether the test passes.
+    """
+    import os
+
     raws = [_real_raw(i) for i in range(160)]
-    t0 = time.process_time()
-    for raw in raws:
-        _previous_projection(copy.deepcopy(raw))
-    old = time.process_time() - t0
-    t0 = time.process_time()
-    svc._project_persona_list_records(copy.deepcopy(raws))
-    new = time.process_time() - t0
-    assert new <= old * 0.3, (old, new)
+    original = svc._source_health_bindings_from_requirements
+    rich_calls = []
+
+    def _spy(*args, **kwargs):
+        rich_calls.append(1)
+        return original(*args, **kwargs)
+
+    # The old path is a positive control: the spy must observe actual rich
+    # work for every row, rather than passing because it watches a dead hook.
+    with monkeypatch.context() as patch:
+        patch.setattr(svc, "_source_health_bindings_from_requirements", _spy)
+        for raw in raws:
+            _previous_projection(copy.deepcopy(raw))
+        assert len(rich_calls) == len(raws)
+
+        rich_calls.clear()
+        rows = svc._project_persona_list_records(copy.deepcopy(raws))
+        assert [row["id"] for row in rows] == [raw["persona_id"] for raw in raws]
+        assert rich_calls == [], "list projection built rich source-health bindings"
+
+    # Keep timings free of spy overhead and entirely outside the default path.
+    if os.environ.get("PANTHEON_PERSONA_LIST_CPU_MEASURE") == "1":
+        t0 = time.process_time()
+        for raw in raws:
+            _previous_projection(copy.deepcopy(raw))
+        old = time.process_time() - t0
+        t0 = time.process_time()
+        svc._project_persona_list_records(copy.deepcopy(raws))
+        new = time.process_time() - t0
+        print(f"persona list CPU seconds: previous={old:.6f} compact={new:.6f}")

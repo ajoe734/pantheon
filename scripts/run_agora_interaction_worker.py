@@ -235,10 +235,20 @@ def main() -> int:
     else:
         raise ValueError(f"Unsupported AGORA_STORE_BACKEND: {servant_backend}")
 
-    # AGORA-SERVANT-DATA-TOOLS-20261127 (SD §4.3): the fixed read-only data tools, resolved in
-    # this process against their owners. A source without configuration answers not_configured.
+    # AGORA-SERVANT-DATA-TOOLS-20261127 (SD §4.3) & AGORA-SERVANT-REVISIONS-AND-REPORT-20261127 (SD §9.3, §13 residual 3):
+    # the fixed read-only data tools and weekly/on-demand trader report service, resolved in
+    # this process against their owners, with a bounded weekly post-attribution tick wired to
+    # HttpAttributionPort (POST /api/attribution/runs) even when no persona cycle runs.
+    from agora.servant.reports import build_default_trader_report_service
+    from services.persona.meeting_triggers import attribution_port_from_env
+
+    tools = build_servant_data_tools(servant_owner, research_store, read_store)
     servant_worker = ServantTurnWorker(
-        owner=servant_owner, tools=build_servant_data_tools(servant_owner, research_store, read_store)
+        owner=servant_owner,
+        tools=tools,
+        reports=build_default_trader_report_service(servant_owner),
+        default_tenant_id=tenant_id,
+        attribution_port_factory=lambda t: attribution_port_from_env(os.environ, t),
     )
     SERVANT_HEARTBEAT_PATH.unlink(missing_ok=True)
 

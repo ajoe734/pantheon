@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, List, Optional
+import logging
+import math
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+
+_logger = logging.getLogger("agora.shadow_mode")
 
 LOCK_SCHEMA = "AgoraHumanDecisionLock.v1"
 LOCK_RESOURCE = "AgoraDecisionLock"
@@ -249,6 +257,254 @@ def _arm_from_event_key(event: Dict[str, Any], keys: Iterable[str], reason: str)
     return unavailable(reason)
 
 
+_IMITATION_ACTION_CODE_MAP: Dict[str, float] = {
+    "enter": 1.0,
+    "entry": 1.0,
+    "buy": 1.0,
+    "add": 0.5,
+    "increase": 0.5,
+    "hold": 0.0,
+    "review": 0.0,
+    "defer": -0.25,
+    "reduce": -0.5,
+    "trim": -0.5,
+    "exit": -1.0,
+    "sell": -1.0,
+    "reject": -1.0,
+}
+
+
+def _observation_for_imitation(event: Mapping[str, Any], snapshot: Mapping[str, Any]) -> List[float]:
+    for candidate in (event.get("observation"), snapshot.get("observation")):
+        if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)) and candidate:
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in candidate):
+                return [float(x) for x in candidate]
+
+    conf = snapshot.get("confidence") if snapshot.get("confidence") is not None else event.get("confidence")
+    if isinstance(conf, Mapping) and isinstance(conf.get("value"), (int, float)) and not isinstance(conf.get("value"), bool):
+        conf_val = float(conf["value"])
+    elif isinstance(conf, (int, float)) and not isinstance(conf, bool):
+        conf_val = float(conf)
+    else:
+        conf_val = 0.75
+
+    prob = snapshot.get("probability") if snapshot.get("probability") is not None else event.get("probability")
+    if isinstance(prob, Mapping) and isinstance(prob.get("value"), (int, float)) and not isinstance(prob.get("value"), bool):
+        prob_val = float(prob["value"])
+    elif isinstance(prob, (int, float)) and not isinstance(prob, bool):
+        prob_val = float(prob)
+    else:
+        prob_val = 0.5
+
+    ev = snapshot.get("expected_value") if snapshot.get("expected_value") is not None else event.get("expected_value")
+    if isinstance(ev, Mapping):
+        net_raw = ev.get("net")
+        down_raw = ev.get("downside")
+        net_val = float(net_raw) if isinstance(net_raw, (int, float)) and not isinstance(net_raw, bool) else 0.0
+        down_val = float(down_raw) if isinstance(down_raw, (int, float)) and not isinstance(down_raw, bool) else 0.0
+    else:
+        net_val = 0.0
+        down_val = 0.0
+
+    action_token = _clean(
+        snapshot.get("suggested_action") or snapshot.get("event_kind") or event.get("suggested_action")
+    ).lower()
+    action_code = _IMITATION_ACTION_CODE_MAP.get(action_token, 0.0)
+    return [conf_val, prob_val, net_val, down_val, action_code]
+
+
+def predict_trader_imitation_action(
+    candidate_or_policy: Mapping[str, Any],
+    *,
+    snapshot: Optional[Mapping[str, Any]] = None,
+    event: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Deterministically evaluate a trained trader behaviour candidate on decision-time inputs."""
+    if not isinstance(candidate_or_policy, Mapping):
+        return unavailable("invalid_trader_imitation_candidate")
+    for wrap_key in ("candidate", "active_candidate"):
+        if wrap_key in candidate_or_policy and not (
+            candidate_or_policy.get("policy_weights")
+            or candidate_or_policy.get("policy")
+            or candidate_or_policy.get("artifact")
+            or candidate_or_policy.get("weights")
+        ):
+            inner = candidate_or_policy.get(wrap_key)
+            if not isinstance(inner, Mapping):
+                return unavailable("no_trader_imitation_candidate_on_decision_event")
+            candidate_or_policy = inner
+            break
+
+    policy: Mapping[str, Any] = candidate_or_policy
+    for key in ("policy_weights", "policy"):
+        sub = candidate_or_policy.get(key)
+        if isinstance(sub, Mapping) and sub.get("weights") and sub.get("action_labels"):
+            policy = sub
+            break
+    if not (policy.get("weights") and policy.get("action_labels")):
+        art = candidate_or_policy.get("artifact")
+        if isinstance(art, Mapping) and isinstance(art.get("policy"), Mapping):
+            policy = art["policy"]
+        elif isinstance(art, Mapping) and isinstance(art.get("model"), Mapping):
+            model = art["model"]
+            m_weights = model.get("weights")
+            m_biases = model.get("biases")
+            m_actions = [str(a).strip() for a in (model.get("actions") or []) if str(a).strip()]
+            if isinstance(m_weights, Mapping) and m_actions:
+                feat_names = ["confidence", "probability", "expected_net", "expected_downside", "suggested_action_code"]
+                converted_w: List[List[float]] = []
+                converted_b: List[float] = []
+                for act in m_actions:
+                    row_map = m_weights.get(act) if isinstance(m_weights.get(act), Mapping) else {}
+                    row_vec = [
+                        float(row_map.get("confidence", 0.0) or 0.0),
+                        float(row_map.get("probability", row_map.get("risk_score", 0.0)) or 0.0),
+                        float(row_map.get("expected_net", 0.0) or 0.0),
+                        float(row_map.get("expected_downside", 0.0) or 0.0),
+                        float(row_map.get("suggested_action_code", 0.0) or 0.0),
+                    ]
+                    converted_w.append(row_vec)
+                    b_val = float((m_biases or {}).get(act, 0.0) or 0.0) if isinstance(m_biases, Mapping) else 0.0
+                    converted_b.append(b_val)
+                policy = {
+                    "action_labels": m_actions,
+                    "weights": converted_w,
+                    "bias": converted_b,
+                    "feature_names": feat_names,
+                }
+
+    weights = policy.get("weights")
+    bias = policy.get("bias")
+    action_labels = [str(a).strip() for a in (policy.get("action_labels") or []) if str(a).strip()]
+    if (
+        not isinstance(weights, Sequence)
+        or not isinstance(bias, Sequence)
+        or not action_labels
+        or len(weights) != len(action_labels)
+        or len(bias) != len(action_labels)
+    ):
+        return unavailable("candidate_missing_policy_weights")
+
+    event_map = event if isinstance(event, Mapping) else {}
+    snap_map = (
+        snapshot
+        if isinstance(snapshot, Mapping)
+        else (
+            event_map.get("decision_time_snapshot")
+            if isinstance(event_map.get("decision_time_snapshot"), Mapping)
+            else {}
+        )
+    )
+    observation = _observation_for_imitation(event_map, snap_map)
+
+    logits: List[float] = []
+    for row, offset in zip(weights, bias):
+        if not isinstance(row, Sequence):
+            return unavailable("candidate_malformed_weight_row")
+        dot = sum(float(w) * float(x) for w, x in zip(row, observation))
+        logits.append(dot + float(offset))
+
+    max_logit = max(logits)
+    exps = [math.exp(l - max_logit) for l in logits]
+    denom = sum(exps)
+    if denom <= 0.0:
+        return unavailable("candidate_zero_probability_norm")
+
+    probabilities = {label: val / denom for label, val in zip(action_labels, exps)}
+    predicted_action = max(probabilities.items(), key=lambda kv: (round(kv[1], 12), kv[0]))[0]
+    predicted_conf = probabilities[predicted_action]
+
+    return {
+        "available": True,
+        "arm": "trader_imitation",
+        "arm_kind": "optional_alt_version",
+        "source_field": "trader_imitation_candidate",
+        "action": predicted_action,
+        "suggested_action": predicted_action,
+        "suggestion": predicted_action,
+        "confidence": round(predicted_conf, 6),
+        "action_probabilities": {k: round(v, 6) for k, v in probabilities.items()},
+        "observation": [round(float(x), 6) for x in observation],
+        "candidate_id": _clean(candidate_or_policy.get("candidate_id") or candidate_or_policy.get("id")) or None,
+        "candidate_version": candidate_or_policy.get("candidate_version") or candidate_or_policy.get("version"),
+        "strategy_id": _clean(candidate_or_policy.get("strategy_id")) or None,
+        "decision_count": candidate_or_policy.get("decision_count"),
+        "artifact_checksum": _clean(
+            candidate_or_policy.get("artifact_checksum") or candidate_or_policy.get("checksum")
+        )
+        or None,
+    }
+
+
+def _arm_trader_imitation(
+    event: Dict[str, Any],
+    *,
+    snapshot: Dict[str, Any],
+    trader_imitation_candidate: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    candidate = (
+        trader_imitation_candidate
+        or event.get("trader_imitation_candidate")
+        or event.get("imitation_candidate")
+    )
+    if isinstance(candidate, Mapping):
+        if candidate.get("available") is False:
+            return unavailable(
+                _clean(
+                    candidate.get("unavailable_reason")
+                    or candidate.get("reason")
+                    or "no_trader_imitation_candidate_on_decision_event"
+                )
+            )
+        pred = predict_trader_imitation_action(candidate, snapshot=snapshot, event=event)
+        if pred.get("available") is True:
+            return pred
+
+    for key in ("trader_imitation", "trader_imitation_suggestion"):
+        value = event.get(key)
+        if isinstance(value, Mapping) and value:
+            if value.get("available") is False:
+                return unavailable(
+                    _clean(
+                        value.get("unavailable_reason")
+                        or value.get("reason")
+                        or "no_trader_imitation_candidate_on_decision_event"
+                    )
+                )
+            if value.get("policy_weights") or value.get("policy") or value.get("weights"):
+                pred = predict_trader_imitation_action(value, snapshot=snapshot, event=event)
+                if pred.get("available") is True:
+                    return pred
+            action = _clean(
+                value.get("action")
+                or value.get("suggestion")
+                or value.get("suggested_action")
+                or value.get("decision")
+                or value.get("verdict")
+                or value.get("stance")
+            )
+            if action:
+                return {
+                    "available": True,
+                    "arm": "trader_imitation",
+                    "arm_kind": "optional_alt_version",
+                    "source_field": key,
+                    **json.loads(json.dumps(dict(value))),
+                    "action": action,
+                    "suggested_action": _clean(value.get("suggested_action")) or action,
+                    "suggestion": _clean(value.get("suggestion")) or action,
+                }
+            return unavailable(
+                _clean(value.get("unavailable_reason") or value.get("reason") or "trader_imitation_missing_suggestion")
+            )
+
+    reason = (
+        _clean(event.get("trader_imitation_unavailable_reason"))
+        or "no_trader_imitation_candidate_on_decision_event"
+    )
+    return unavailable(reason)
+
+
 def canonical_checksum(lock: Dict[str, Any]) -> str:
     body = {k: v for k, v in lock.items() if k != "checksum"}
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -271,6 +527,7 @@ def build_decision_lock(
     account_id: Optional[str] = None,
     broker_ids: Optional[List[str]] = None,
     actor_roles: Optional[List[str]] = None,
+    trader_imitation_candidate: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     if not _clean(tenant_id) or not _clean(user_id):
         raise DecisionLockInvalidError("trader_identity_missing")
@@ -280,6 +537,16 @@ def build_decision_lock(
     subject = event.get("subject") if isinstance(event.get("subject"), dict) else {}
     acct = _clean(account_id) or _clean(event.get("account_id")) or None
     brokers = [str(b) for b in (broker_ids or event.get("broker_ids") or []) if _clean(b)]
+    snapshot = build_decision_time_snapshot(
+        event,
+        decision_time=decision_time,
+        data_cutoff=cutoff or None,
+    )
+    imitation_arm = _arm_trader_imitation(
+        event,
+        snapshot=snapshot,
+        trader_imitation_candidate=trader_imitation_candidate,
+    )
     lock: Dict[str, Any] = {
         "schema": LOCK_SCHEMA,
         "human_decision_id": human_decision_id,
@@ -304,11 +571,7 @@ def build_decision_lock(
         "decision": a4_decision(body_decision, event_kind),
         "trading_room_verdict": body_decision,
         "evidence_kind": decision_evidence_kind(body_decision, modifications),
-        "decision_time_snapshot": build_decision_time_snapshot(
-            event,
-            decision_time=decision_time,
-            data_cutoff=cutoff or None,
-        ),
+        "decision_time_snapshot": snapshot,
         "target_instrument": _clean(subject.get("symbol")) or None,
         "event_kind": event_kind or None,
         "raw_rationale": rationale,
@@ -343,6 +606,10 @@ def build_decision_lock(
                 ("institutional_view", "committee_variant"),
                 "no_institutional_view_on_decision_event",
             ),
+            "trader_imitation": dict(imitation_arm),
+        },
+        "optional_alt_versions": {
+            "trader_imitation": dict(imitation_arm),
         },
         "no_order_route_proof": "agora_decision_lock_record_only",
         "immutable": True,
@@ -355,6 +622,509 @@ def verify_checksum(lock: Dict[str, Any]) -> bool:
     return lock.get("checksum") == canonical_checksum(lock)
 
 
+def apply_paper_proxy_fill_to_decision_lock(
+    lock: Mapping[str, Any],
+    fill: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Populate a decision lock's ``human_actual`` arm with a paper-book fill as a
+    ``pantheon_paper_proxy`` observation (never a real or verified broker fill).
+    """
+    if not isinstance(lock, Mapping):
+        raise DecisionLockInvalidError("decision_lock_missing")
+    if not isinstance(fill, Mapping):
+        raise DecisionLockInvalidError("paper_proxy_fill_missing")
+
+    verdict = _clean(lock.get("trading_room_verdict"))
+    decision = _clean(lock.get("decision"))
+    existing_kind = _clean(lock.get("execution_observation_kind"))
+    if (
+        existing_kind == "declared_no_trade"
+        or verdict in {"reject", "defer", "shadow"}
+        or decision in {"reject", "defer", "no_trade"}
+    ):
+        raise DecisionLockInvalidError("declared_no_trade_cannot_claim_fill")
+
+    requested_kind = _clean(fill.get("execution_observation_kind")) or "pantheon_paper_proxy"
+    if requested_kind in ACTUAL_FILL_KINDS or requested_kind != "pantheon_paper_proxy":
+        raise DecisionLockInvalidError(f"paper_proxy_fill_requires_pantheon_paper_proxy:{requested_kind}")
+    if (
+        fill.get("actual_fill_claimed") is True
+        or fill.get("execution_verified") is True
+        or fill.get("is_real_fill") is True
+    ):
+        raise DecisionLockInvalidError("paper_proxy_fill_cannot_claim_real_fill")
+    environment = _clean(fill.get("environment") or "paper").lower()
+    if environment != "paper":
+        raise DecisionLockInvalidError(f"paper_proxy_fill_must_be_paper_environment:{environment}")
+
+    broker_order_id = _clean(fill.get("broker_order_id") or fill.get("order_id")) or None
+    signal_id = _clean(fill.get("signal_id") or fill.get("client_order_id")) or None
+    handoff_id = _clean(fill.get("handoff_id")) or None
+    intent_id = _clean(fill.get("intent_id")) or None
+    fill_id = (
+        _clean(fill.get("fill_id"))
+        or (f"pfill-{broker_order_id}" if broker_order_id else "")
+        or (f"pfill-{signal_id}" if signal_id else "")
+        or (f"pfill-{handoff_id}" if handoff_id else "")
+        or None
+    )
+    runtime_binding_id = _clean(fill.get("runtime_binding_id") or fill.get("binding_id")) or None
+    runtime_id = _clean(fill.get("runtime_id")) or None
+    capital_pool_id = _clean(fill.get("capital_pool_id")) or None
+    servant_persona_id = _clean(fill.get("servant_persona_id") or fill.get("persona_id")) or None
+    symbol = _clean(fill.get("symbol")) or _clean(lock.get("target_instrument")) or None
+    side = _clean(fill.get("side")) or None
+    fill_status = _clean(fill.get("fill_status") or fill.get("status") or "filled") or "filled"
+
+    raw_qty = fill.get("quantity") if fill.get("quantity") is not None else fill.get("qty")
+    raw_fill_qty = fill.get("fill_qty") if fill.get("fill_qty") is not None else raw_qty
+    raw_fill_price = fill.get("fill_price") if fill.get("fill_price") is not None else fill.get("price")
+
+    def _opt_float(val: Any) -> Optional[float]:
+        if val is None or val == "":
+            return None
+        try:
+            num = float(val)
+        except (TypeError, ValueError) as exc:
+            raise DecisionLockInvalidError("paper_proxy_fill_numeric_invalid") from exc
+        if not math.isfinite(num):
+            raise DecisionLockInvalidError("paper_proxy_fill_numeric_invalid")
+        return num
+
+    qty_val = _opt_float(raw_qty)
+    fill_qty_val = _opt_float(raw_fill_qty)
+    if qty_val is None and fill_qty_val is not None:
+        qty_val = fill_qty_val
+    fill_price_val = _opt_float(raw_fill_price)
+    filled_at = _clean(fill.get("filled_at") or fill.get("updated_at")) or None
+
+    ref_token = broker_order_id or signal_id or handoff_id or fill_id
+    existing_refs = [str(r) for r in (lock.get("fill_refs") or []) if _clean(r)]
+    for candidate_ref in (fill.get("fill_refs") or []):
+        clean_ref = _clean(candidate_ref)
+        if clean_ref and clean_ref not in existing_refs:
+            existing_refs.append(clean_ref)
+    if ref_token:
+        canonical_ref = f"paper-fill:{ref_token}"
+        if canonical_ref not in existing_refs:
+            existing_refs.append(canonical_ref)
+
+    human_decision_id_val = _clean(lock.get("human_decision_id") or fill.get("human_decision_id")) or None
+    paper_fill_record: Dict[str, Any] = {
+        "fill_id": fill_id,
+        "decision_id": human_decision_id_val,
+        "human_decision_id": human_decision_id_val,
+        "arm": "human_actual",
+        "broker_order_id": broker_order_id,
+        "signal_id": signal_id,
+        "handoff_id": handoff_id,
+        "intent_id": intent_id,
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": capital_pool_id,
+        "servant_persona_id": servant_persona_id,
+        "symbol": symbol,
+        "side": side,
+        "quantity": qty_val,
+        "fill_qty": fill_qty_val,
+        "fill_price": fill_price_val,
+        "filled_at": filled_at,
+        "fill_status": fill_status,
+        "environment": "paper",
+        "settlement_source": "pantheon_paper_proxy",
+        "execution_observation_kind": "pantheon_paper_proxy",
+        "execution_display_label": DISPLAY_LABELS["pantheon_paper_proxy"],
+        "execution_confidence": DEFAULT_CONFIDENCE["pantheon_paper_proxy"],
+        "execution_verified": False,
+        "actual_fill_claimed": False,
+        "is_real_fill": False,
+        "fill_source": "pantheon_paper_book",
+    }
+
+    updated: Dict[str, Any] = json.loads(json.dumps(dict(lock), default=str))
+    arms = dict(updated.get("arms")) if isinstance(updated.get("arms"), Mapping) else {}
+    human_actual = dict(arms.get("human_actual")) if isinstance(arms.get("human_actual"), Mapping) else {}
+    action_val = (
+        _clean(human_actual.get("action"))
+        or _clean(human_actual.get("decision"))
+        or decision
+        or "enter"
+    )
+    human_actual.update(
+        {
+            "available": True,
+            "action": action_val,
+            "decision": _clean(human_actual.get("decision")) or decision or action_val,
+            "trading_room_verdict": _clean(human_actual.get("trading_room_verdict")) or verdict or "approve",
+            "execution_observation_kind": "pantheon_paper_proxy",
+            "execution_display_label": DISPLAY_LABELS["pantheon_paper_proxy"],
+            "execution_confidence": DEFAULT_CONFIDENCE["pantheon_paper_proxy"],
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+            "environment": "paper",
+            "fill_source": "pantheon_paper_book",
+            "fill_status": fill_status,
+            "fill_id": fill_id,
+            "broker_order_id": broker_order_id,
+            "signal_id": signal_id,
+            "handoff_id": handoff_id,
+            "intent_id": intent_id,
+            "runtime_binding_id": runtime_binding_id,
+            "runtime_id": runtime_id,
+            "capital_pool_id": capital_pool_id,
+            "servant_persona_id": servant_persona_id,
+            "symbol": symbol,
+            "side": side,
+            "quantity": qty_val,
+            "fill_qty": fill_qty_val,
+            "fill_price": fill_price_val,
+            "price": fill_price_val,
+            "filled_at": filled_at,
+            "fill_refs": list(existing_refs),
+            "paper_fill": dict(paper_fill_record),
+        }
+    )
+    arms["human_actual"] = human_actual
+    updated["arms"] = arms
+    updated["execution_observation_kind"] = "pantheon_paper_proxy"
+    updated["execution_display_label"] = DISPLAY_LABELS["pantheon_paper_proxy"]
+    updated["execution_confidence"] = DEFAULT_CONFIDENCE["pantheon_paper_proxy"]
+    updated["execution_verified"] = False
+    updated["actual_fill_claimed"] = False
+    updated["fill_refs"] = list(existing_refs)
+    updated["paper_fill"] = dict(paper_fill_record)
+    updated["checksum"] = canonical_checksum(updated)
+    return updated
+
+
+_POLICY_LEARNING_URL_ENVS = (
+    "PANTHEON_POLICY_LEARNING_API_URL",
+    "POLICY_LEARNING_API_URL",
+    "PANTHEON_POLICY_LEARNING_SERVICE_URL",
+    "POLICY_LEARNING_URL",
+)
+_POLICY_LEARNING_TOKEN_ENVS = (
+    "POLICY_LEARNING_SERVICE_TOKEN",
+    "PANTHEON_POLICY_LEARNING_SERVICE_TOKEN",
+    "POLICY_LEARNING_API_TOKEN",
+    "AGORA_HANDOFF_SERVICE_TOKEN",
+)
+POLICY_LEARNING_URL_ENVS = _POLICY_LEARNING_URL_ENVS
+POLICY_LEARNING_TOKEN_ENVS = _POLICY_LEARNING_TOKEN_ENVS
+
+_PUBLISHED_DEV_POLICY_LEARNING_TOKENS = frozenset(
+    {
+        "pantheon-local-policy-learning-service",
+        "replace-me-policy-learning-service-token",
+        "pantheon-local-agora-handoff-service-token",
+        "replace-me-agora-handoff-service-token",
+    }
+)
+_PLACEHOLDER_TOKEN_PREFIXES = (
+    "replace-me",
+    "replaceme",
+    "change-me",
+    "changeme",
+    "placeholder",
+    "example",
+    "sample",
+    "dummy",
+    "todo",
+    "your-",
+)
+
+
+def _is_enforced_deployment_posture() -> bool:
+    for env_name in ("PANTHEON_PERSISTENCE_POSTURE", "PERSISTENCE_POSTURE", "PANTHEON_ENV"):
+        raw = _clean(os.getenv(env_name)).lower()
+        if raw in {"stage", "staging", "staging-live", "prod", "production"} or raw.startswith(
+            ("staging", "prod")
+        ):
+            return True
+    return False
+
+
+def _is_published_or_placeholder_token(token: str) -> bool:
+    clean = _clean(token)
+    if not clean:
+        return False
+    if clean in _PUBLISHED_DEV_POLICY_LEARNING_TOKENS:
+        return True
+    norm = clean.lower().replace("_", "-")
+    return norm.startswith(_PLACEHOLDER_TOKEN_PREFIXES)
+
+
+class PolicyLearningImitationCandidateClient:
+    """Tenant-bound client for policy-learning's /api/policy-learning/trader-imitation/candidates route."""
+
+    URL_ENVS = _POLICY_LEARNING_URL_ENVS
+    TOKEN_ENVS = _POLICY_LEARNING_TOKEN_ENVS
+
+    def __init__(
+        self,
+        *,
+        base_url: Optional[str] = None,
+        token: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+        urlopen: Optional[Callable[..., Any]] = None,
+    ) -> None:
+        self._base_url = base_url
+        self._token = token
+        self._timeout_seconds = timeout_seconds
+        self._urlopen = urlopen
+
+    def _resolve_base_url(self) -> str:
+        if self._base_url is not None and _clean(self._base_url):
+            return _clean(self._base_url).rstrip("/")
+        for env_name in _POLICY_LEARNING_URL_ENVS:
+            val = _clean(os.getenv(env_name))
+            if val:
+                return val.rstrip("/")
+        return ""
+
+    def _resolve_token(self) -> str:
+        enforced = _is_enforced_deployment_posture()
+        if self._token is not None and _clean(self._token):
+            tok = _clean(self._token)
+            if enforced and _is_published_or_placeholder_token(tok):
+                return ""
+            return tok
+        for env_name in _POLICY_LEARNING_TOKEN_ENVS:
+            val = _clean(os.getenv(env_name))
+            if not val:
+                continue
+            if enforced and _is_published_or_placeholder_token(val):
+                continue
+            return val
+        return ""
+
+    def _resolve_timeout(self) -> float:
+        if self._timeout_seconds is not None:
+            return max(0.05, float(self._timeout_seconds))
+        raw = _clean(os.getenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0"))
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            return 2.0
+
+    def get_trader_imitation_state(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Query GET /api/policy-learning/trader-imitation/candidates bound to caller's tenant and user."""
+        clean_tenant = _clean(tenant_id)
+        clean_user = _clean(user_id)
+        clean_strategy = _clean(strategy_id)
+        if not clean_tenant or not clean_user:
+            return None
+        base_url = self._resolve_base_url()
+        token = self._resolve_token()
+        if not base_url or not token:
+            reason = (
+                "policy_learning_url_unconfigured"
+                if not base_url
+                else "policy_learning_token_unconfigured"
+            )
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient candidate source unconfigured (%s) for tenant=%s user=%s",
+                reason,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unconfigured",
+                "source": "unconfigured",
+                "unavailable_reason": reason,
+            }
+
+        params: Dict[str, str] = {"user_id": clean_user}
+        if clean_strategy:
+            params["strategy_id"] = clean_strategy
+        qs = urllib.parse.urlencode(params)
+        url = f"{base_url}/api/policy-learning/trader-imitation/candidates?{qs}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
+        req.add_unredirected_header("X-Tenant-Id", clean_tenant)
+        req.add_unredirected_header("X-Pantheon-Tenant", clean_tenant)
+        req.add_unredirected_header("X-Pantheon-Service-Actor", f"bff:{clean_user}")
+        opener = self._urlopen or urllib.request.urlopen
+        try:
+            with opener(req, timeout=self._resolve_timeout()) as resp:
+                raw_bytes = resp.read()
+                text = (
+                    raw_bytes.decode("utf-8").strip()
+                    if isinstance(raw_bytes, (bytes, bytearray))
+                    else str(raw_bytes or "").strip()
+                )
+                payload = json.loads(text) if text else None
+        except urllib.error.HTTPError as exc:
+            reason = f"policy_learning_http_{exc.code}"
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient HTTP %s from %s for tenant=%s user=%s",
+                exc.code,
+                url,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": reason,
+            }
+        except Exception as exc:
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient request to %s failed for tenant=%s user=%s: %s",
+                url,
+                clean_tenant,
+                clean_user,
+                exc,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": "policy_learning_request_failed",
+            }
+
+        if not isinstance(payload, Mapping):
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient received invalid payload from %s for tenant=%s user=%s",
+                url,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": "policy_learning_invalid_payload",
+            }
+        resp_tenant = _clean(payload.get("tenant_id"))
+        resp_user = _clean(payload.get("user_id"))
+        if (resp_tenant and resp_tenant != clean_tenant) or (resp_user and resp_user != clean_user):
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient scope mismatch from %s (expected=%s/%s got=%s/%s)",
+                url,
+                clean_tenant,
+                clean_user,
+                resp_tenant,
+                resp_user,
+            )
+            return None
+
+        raw_cands = payload.get("candidates")
+        candidates = (
+            [
+                dict(c)
+                for c in raw_cands
+                if isinstance(c, Mapping)
+                and (not _clean(c.get("tenant_id")) or _clean(c.get("tenant_id")) == clean_tenant)
+                and (not _clean(c.get("user_id")) or _clean(c.get("user_id")) == clean_user)
+            ]
+            if isinstance(raw_cands, (list, tuple))
+            else []
+        )
+        active = payload.get("active_candidate") or payload.get("candidate")
+        candidate_obj: Optional[Dict[str, Any]] = None
+        if isinstance(active, Mapping):
+            if (not _clean(active.get("tenant_id")) or _clean(active.get("tenant_id")) == clean_tenant) and (
+                not _clean(active.get("user_id")) or _clean(active.get("user_id")) == clean_user
+            ):
+                candidate_obj = dict(active)
+        elif candidates:
+            candidate_obj = candidates[0]
+        if candidate_obj is not None and not candidates:
+            candidates = [candidate_obj]
+
+        return {
+            "candidate": candidate_obj,
+            "candidates": candidates[:3],
+            "decision_count": payload.get("decision_count"),
+            "training_approved": bool(payload.get("training_approved", False)),
+            "state": _clean(payload.get("state")) or None,
+            "source": "policy_learning",
+        }
+
+    def list_trader_behaviour_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        state = self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+        if not isinstance(state, Mapping):
+            return []
+        return list(state.get("candidates") or [])
+
+    def resolve_candidate(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        state = self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+        if not isinstance(state, Mapping):
+            return None
+        cand = state.get("candidate")
+        return dict(cand) if isinstance(cand, Mapping) else None
+
+    def __call__(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+
+
+def build_default_imitation_candidate_resolver(
+    *,
+    base_url: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
+    urlopen: Optional[Callable[..., Any]] = None,
+) -> PolicyLearningImitationCandidateClient:
+    return PolicyLearningImitationCandidateClient(
+        base_url=base_url,
+        token=token,
+        timeout_seconds=timeout_seconds,
+        urlopen=urlopen,
+    )
+
+
 __all__ = [
     "ACTUAL_FILL_KINDS",
     "DECISION_EVIDENCE_KINDS",
@@ -364,13 +1134,17 @@ __all__ = [
     "EXECUTION_OBSERVATION_KINDS",
     "LOCK_RESOURCE",
     "LOCK_SCHEMA",
+    "PolicyLearningImitationCandidateClient",
     "TRADER_DECLARABLE_KINDS",
     "VERDICT_TO_EVIDENCE_KIND",
     "a4_decision",
+    "apply_paper_proxy_fill_to_decision_lock",
     "build_decision_lock",
     "build_decision_time_snapshot",
+    "build_default_imitation_candidate_resolver",
     "canonical_checksum",
     "decision_evidence_kind",
+    "predict_trader_imitation_action",
     "unavailable",
     "verify_checksum",
 ]

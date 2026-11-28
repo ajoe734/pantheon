@@ -14,8 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -29,6 +31,7 @@ ENABLED_ENV = "PANTHEON_L2_EXTRACTION_ENABLED"
 BUDGET_PATH_ENV = "PANTHEON_L2_EXTRACTION_LEDGER_PATH"
 # Roughly 8 000 input tokens (existing client limit) with headroom for the prompt.
 MAX_PROMPT_TEXT_CHARS = 20_000
+MAX_UNSENT_EVENTS = 10_080  # ~7 days at the existing 60-second controller tick
 
 # The model's abstention reason is stored as-is, so an over-long answer stays a
 # refusal (adapter + client schema), never a silent truncation. The limit is
@@ -185,6 +188,11 @@ def hypothesis_card_model_schema() -> dict[str, Any]:
 
 
 def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) -> str:
+    from services.source_ingestion.hypothesis_compiler import catalogue_summary
+
+    catalogue = catalogue_summary()
+    compact = json.dumps({k: catalogue[k] for k in ("datasets", "builtin_fields")},
+                         separators=(",", ":"), ensure_ascii=False)
     return "\n".join(
         [
             "You extract at most one testable market hypothesis from the document below.",
@@ -196,7 +204,10 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             "a longer answer is refused, so keep it brief.",
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
-            "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
+            "Top-level signal_inputs must be catalogue dataset.field names; rule_sketch uses plain factor vocabulary only.",
+            "Use the governed names below, including for idea inputs and prediction observables.",
+            "Use needs_data:<name> only when no catalogue dataset provides the required data; never invent aliases.",
+            "CATALOGUE: " + compact,
             "Separately include screen_idea (which stocks, in ordered steps) and entry_idea (when to buy).",
             "Each idea has statement, signal_inputs [{dataset, field}], and exact cited_spans.",
             "Omit an idea when absent from the document; never invent a missing screen or entry.",
@@ -262,7 +273,15 @@ def verify_cited_spans(card: Mapping[str, Any], *, text: str, source_record_id: 
         if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start or end > len(text):
             raise CardRejected("citation_unverifiable", f"span {i} offsets out of range")
         if not exact or text[start:end] != exact:
-            raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text")
+            def normalize(value: str) -> str:
+                return " ".join(unicodedata.normalize("NFKC", value).split())
+
+            normalized_exact = normalize(exact or "")
+            matched = bool(normalized_exact and normalized_exact in normalize(text))
+            # Raw preview keeps exactly 80 characters even for control-heavy
+            # quotes; JSON escaping could exceed the existing 500-char ledger cap.
+            trace = f"normalized_match={str(matched).lower()}; exact_text={(exact or '')[:80]}"
+            raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text; {trace}")
 
 
 def finalize_card(
@@ -284,9 +303,7 @@ def finalize_card(
     for name in ("screen_idea", "entry_idea"):
         if name in card:
             verify_cited_spans(card[name], text=text, source_record_id=source_record_id)
-    missing = idea_missing_datasets(card)
-    if missing and card["testability"] != "not_testable":
-        card["testability"] = f"needs_data:{missing[0]}"
+    card["testability"] = stamped_card_testability(card)
     if "predictions" in card:
         predictions = []
         for i, prediction in enumerate(card["predictions"]):
@@ -300,6 +317,33 @@ def finalize_card(
             predictions.append({**prediction, "testability": f"needs_data:{missing}" if missing else "testable"})
         card["predictions"] = predictions
     return card
+
+
+UNPARSABLE_SIGNAL_INPUT = "unparsable_signal_input"
+
+
+def signal_input_missing_datasets(card: Mapping[str, Any]) -> list[str]:
+    """Read legacy top-level strings as dataset.field, failing closed on bad names."""
+    from services.registry.factor_rule import get_feature_definition
+
+    missing = set()
+    for item in card.get("signal_inputs", ()):
+        if not isinstance(item, str) or "." not in item:
+            missing.add(UNPARSABLE_SIGNAL_INPUT)
+            continue
+        dataset, feature = item.rsplit(".", 1)
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,80}", dataset) or not feature or feature != feature.strip():
+            missing.add(UNPARSABLE_SIGNAL_INPUT)
+        elif get_feature_definition(dataset, feature) is None:
+            missing.add(dataset)
+    return sorted(missing)
+
+
+def stamped_card_testability(card: Mapping[str, Any]) -> str:
+    """Retain abstention/declared unmet requirements; never trust model testable alone."""
+    declared = str(card.get("testability") or "")
+    missing = sorted(set(idea_missing_datasets(card) + signal_input_missing_datasets(card)))
+    return f"needs_data:{missing[0]}" if missing and declared != "not_testable" else declared
 
 
 def idea_missing_datasets(card: Mapping[str, Any]) -> list[str]:
@@ -505,7 +549,8 @@ class ExtractionLedger:
 
     Every model call is counted against the daily cap, including a retry of the
     same record on the same day (a failing provider must not spend past the
-    cap). A source is called at most 3 times a UTC day and 6 times in total,
+    cap). Proven unsent calls refund the reservation and keep a separate daily
+    counter and bounded reason events. A source is called at most 3 times a UTC day and 6 times in total,
     summed over all its versions; the ledger also counts calls that ended in a
     timeout or a billing-only provider failure. ``input_answers`` keeps the
     terminal answer of each (source, extraction input digest) so an unchanged
@@ -531,7 +576,7 @@ class ExtractionLedger:
         with self._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
             cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
-            for name in ("timeouts", "billing", "unavailable"):
+            for name in ("timeouts", "billing", "unavailable", "unsent"):
                 if name not in cols:
                     c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
             if "cap" not in cols:
@@ -546,6 +591,7 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
             )
+            c.execute("CREATE INDEX IF NOT EXISTS events_unsent_id ON events(id) WHERE outcome='unsent'")
             if "usage" not in {row[1] for row in c.execute("PRAGMA table_info(events)")}:
                 # Provider token usage of the call behind this outcome (JSON);
                 # NULL when no call was made, null fields when not reported.
@@ -618,7 +664,11 @@ class ExtractionLedger:
         finally:
             conn.close()
 
-    def reserve_attempt(self, source_id: str = "", digest: str = "") -> str:
+    @staticmethod
+    def utc_day() -> str:
+        return _today()
+
+    def reserve_attempt(self, source_id: str = "", digest: str = "", *, day: str | None = None) -> str:
         """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
         Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
@@ -632,7 +682,7 @@ class ExtractionLedger:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
-            day = _today()
+            day = day or _today()
             today_n = 0
             if source_id:
                 total, today_n = self._source_attempts(c, source_id, day)
@@ -694,6 +744,41 @@ class ExtractionLedger:
     def remaining_daily_calls(self) -> int:
         """Remaining calls under today's daily cap (0 when exhausted)."""
         return max(0, self._daily_cap - self.calls_today())
+
+    def note_unsent(self, source_id: str, *, day: str, reason: str, detail: str) -> None:
+        """Refund exactly one caller-owned reservation and record no-provider evidence.
+
+        Reservations remain spent after ambiguous failure or process crash. The
+        original UTC day is retained even when dispatch crosses midnight.
+        """
+        from services.source_ingestion.semantic_extraction_client import UNSENT_CALL_REASONS
+
+        if reason not in UNSENT_CALL_REASONS:
+            raise ValueError(f"Unknown unsent reason: {reason}")
+        with self._lock, self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            _, before = self._source_attempts(c, source_id, day)
+            c.execute(
+                "UPDATE record_attempts SET total = total - 1,"
+                " day_n = CASE WHEN day = ? THEN MAX(0, day_n - 1) ELSE day_n END"
+                " WHERE source_id=? AND digest='' AND total > 0", (day, source_id),
+            )
+            _, after = self._source_attempts(c, source_id, day)
+            c.execute(
+                "UPDATE calls SET n = MAX(0, n - 1), unsent = unsent + 1,"
+                " sources = MAX(0, sources - ?) WHERE day=?", (int(before > 0 and after == 0), day),
+            )
+            c.execute(
+                "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,'unsent',?)",
+                (datetime.now(timezone.utc).isoformat(), source_id[:256], f"{reason}: {detail}"[:500]),
+            )
+            # Existing events lack retention. Bound this new event kind separately
+            # to 10,080 entries (~7 days at one unavailable tick/minute).
+            c.execute(
+                "DELETE FROM events WHERE outcome='unsent' AND id < COALESCE("
+                "(SELECT id FROM events WHERE outcome='unsent' ORDER BY id DESC LIMIT 1 OFFSET ?), 0)",
+                (MAX_UNSENT_EVENTS - 1,),
+            )
 
     def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:
         """Count a spent call that yielded nothing, and keep the record's reason."""
@@ -802,12 +887,13 @@ class ExtractionLedger:
         """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT n, timeouts, billing, unavailable, sources FROM calls WHERE day=?", (_today(),)
+                "SELECT n, timeouts, billing, unavailable, sources, unsent FROM calls WHERE day=?", (_today(),)
             ).fetchone()
-        n, timeouts, billing, unavailable, sources = (int(v or 0) for v in (row or (0, 0, 0, 0, 0)))
+        n, timeouts, billing, unavailable, sources, unsent = (int(v or 0) for v in (row or (0, 0, 0, 0, 0, 0)))
         return {
             "day": _today(),
             "calls": n,
+            "unsent_calls": unsent,
             "daily_cap": self._daily_cap,
             "timeout_calls": timeouts,
             "billing_failed_calls": billing,
@@ -1308,7 +1394,8 @@ class HypothesisExtractor:
             prior = self._ledger.input_answer(sid, input_digest)
             if prior is not None and is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
                 self._ledger.retire_input_answer(sid, input_digest)
-        reservation = self._ledger.reserve_attempt(sid, digest)
+        reservation_day = self._ledger.utc_day()
+        reservation = self._ledger.reserve_attempt(sid, digest, day=reservation_day)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
         if reservation in (RECORD_DAILY_LIMIT, RECORD_TOTAL_LIMIT):
@@ -1326,9 +1413,19 @@ class HypothesisExtractor:
             result = self._client.extract(request)
         except Exception as exc:  # noqa: BLE001 - an unreachable adapter is not "no hypothesis"
             detail = f"{type(exc).__name__}: {exc}"
+            from services.source_ingestion.semantic_extraction_client import SemanticExtractionClientError
+            if isinstance(exc, SemanticExtractionClientError) and exc.unsent_reason:
+                self._ledger.note_unsent(sid, day=reservation_day, reason=exc.unsent_reason, detail=detail)
+                return ExtractionOutcome("extraction_unavailable", detail=detail, extra={"unsent_reason": exc.unsent_reason})
             self._ledger.note_call_failure(sid, digest, "transport_error", detail)
             return self._done(sid, "unavailable", detail)
         usage = call_usage(result)
+        if getattr(result, "unsent_reason", None):
+            self._ledger.note_unsent(
+                sid, day=reservation_day, reason=result.unsent_reason, detail=result.failure_message or "",
+            )
+            status = "failed" if result.unsent_reason in {"admission_denied", "input_budget_exceeded"} else "extraction_unavailable"
+            return ExtractionOutcome(status, detail=result.failure_message or "", extra={"unsent_reason": result.unsent_reason})
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
             detail = f"{result.failure_code}: {result.failure_message}"
             if result.failure_code in UNAVAILABLE_FAILURE_CODES:
