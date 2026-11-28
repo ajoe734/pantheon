@@ -12,7 +12,7 @@ import stat
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -895,20 +895,48 @@ def test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages(serve
     assert "reason=ritual_marked_events_since_switch:1" in fail_done.stdout
 
 
-def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
-    # The subprocess uses the real clock: keep this world stale even on the
-    # fixed NOW date used by the in-process tests above.
-    stale = "2020-01-01T00:00:00Z"
-    for item in Handler.board["data"]["discovered"]:
+def stale_world(now_utc):
+    """Date every timestamp and date in the normal wire shapes 31 days back."""
+    board, health = good_board(), good_health()
+    stale_at = now_utc - timedelta(days=31)
+    stale = stale_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_day = stale_at.strftime("%Y-%m-%d")
+    for item in board["data"]["discovered"]:
         item["since"] = stale
-    Handler.board["data"]["scaffolded"][0]["latest_at"] = stale
-    Handler.board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = "2020-01-01"
-    Handler.board["data"]["discovery_summary"]["llm_calls"].update(
-        utc_day="2020-01-01", release_switched_at=stale,
+    board["data"]["scaffolded"][0]["latest_at"] = stale
+    board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = stale_day
+    board["data"]["discovery_summary"]["llm_calls"].update(
+        utc_day=stale_day, release_switched_at=stale,
         ritual_events_oldest_scanned_at=stale,
     )
-    Handler.health["data"]["last_success"]["at"] = stale
-    Handler.health["data"]["downstream_actual_state"]["checked_at"] = stale
+    health["data"]["last_success"]["at"] = stale
+    health["data"]["downstream_actual_state"]["checked_at"] = stale
+    return board, health
+
+
+def test_stale_world_fails_at_the_original_clock_window_and_real_now():
+    real_now = datetime.now(timezone.utc)
+    moments = [NOW, NOW.replace(hour=10), NOW.replace(hour=17, minute=34), real_now]
+    # Keep one world stale at every checkpoint, even when this test is run
+    # more than 31 days after the historical failure window.
+    board, health = stale_world(min(moments))
+    for moment in moments:
+        report = dpd.judge(board, health, moment)
+        assert report["verdict"] == "failed", (moment, report)
+        for name, reason in (
+            ("template_search", "last_search_stale"),
+            ("governed_market_dataset", "governed_snapshot_stale"),
+            ("templates_evaluated", "evaluation_stale"),
+            ("distillation_dead_letters", "distillation_state_stale"),
+        ):
+            result = stage(report, name)
+            assert result["status"] == "failed" and result["reason"] == reason, (moment, result)
+
+
+def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
+    # The subprocess uses the real UTC clock; all served dates are 31 days
+    # before test time, independently of the fixed NOW used by other tests.
+    Handler.board, Handler.health = stale_world(datetime.now(timezone.utc))
     done = exec_probe(server)
     out = done.stdout + done.stderr
     assert done.returncode == 1 and "VERDICT failed" in out

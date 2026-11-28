@@ -19,6 +19,16 @@ loader.exec_module(probe)
 NOW = datetime(2026, 11, 21, tzinfo=timezone.utc)
 
 
+def pin_probe_clock(monkeypatch):
+    """Keep CLI fixture approvals evaluated at the same instant as check()."""
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(probe, "datetime", FixtureClock)
+
+
 def evidence():
     policy = {"risk_policy_id": "fixture-policy", "version": "fixture-v1", "status": "active",
               "allowed_stages": ["paper"], "gross_limit": 0.8, "net_limit": 0.7,
@@ -220,6 +230,7 @@ def test_missing_credentials_are_skip_but_not_pass(monkeypatch, capsys):
 
 
 def test_http_main_uses_policy_reader_only_for_approval_get(monkeypatch, capsys):
+    pin_probe_clock(monkeypatch)
     import io
     import json
     from urllib.parse import urlsplit
@@ -255,6 +266,7 @@ def test_http_main_uses_policy_reader_only_for_approval_get(monkeypatch, capsys)
 
 
 def test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token(monkeypatch, capsys):
+    pin_probe_clock(monkeypatch)
     import io
     import json
     from urllib.parse import urlsplit
@@ -322,6 +334,7 @@ def test_dev_owner_transport_fails_closed_without_echoing_remote_secrets(monkeyp
 
 
 def test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads(monkeypatch, capsys):
+    pin_probe_clock(monkeypatch)
     import io
     import json
     from urllib.parse import urlsplit
@@ -357,6 +370,37 @@ def test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads(monkeyp
     assert probe.main() == 0
     assert [call[0] for call in calls] == ["approvals", "capital"]
     assert "viewer-secret" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("cli_test", [
+    test_http_main_uses_policy_reader_only_for_approval_get,
+    test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token,
+    test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads,
+], ids=lambda test: test.__name__)
+def test_cli_paths_pin_probe_clock_after_approval_expiry(monkeypatch, capsys, cli_test):
+    expired_now = datetime(2026, 12, 1, 0, 0, 1, tzinfo=timezone.utc)
+
+    class ExpiredClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return expired_now.astimezone(tz) if tz else expired_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(probe, "datetime", ExpiredClock)
+    assert probe.datetime.now(timezone.utc) == expired_now
+    reports = []
+    run = probe.run
+
+    def record_report(*args, **kwargs):
+        report = run(*args, **kwargs)
+        reports.append(report)
+        return report
+
+    monkeypatch.setattr(probe, "run", record_report)
+    # Reuse each full transport path, its real fixture rows, and every assertion.
+    cli_test(monkeypatch, capsys)
+    assert len(reports) == 1
+    assert reports[0]["passed"] is True
+    assert reports[0]["observed_at"] == NOW.isoformat()
 
 
 def legacy_v1_policy():
