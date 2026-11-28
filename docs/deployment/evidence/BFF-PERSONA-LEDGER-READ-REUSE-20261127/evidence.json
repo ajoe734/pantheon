@@ -8,7 +8,7 @@
     "deployed": false,
     "accepted": false,
     "pr": "https://github.com/ajoe734/pantheon/pull/7999",
-    "draft": true
+    "draft": false
   },
   "implementation": {
     "scope": "Only Postgres provisioning store and Persona directory ledger-read seam; no coordinator, provisioning owner writes, agent-provision functions or route contract changed.",
