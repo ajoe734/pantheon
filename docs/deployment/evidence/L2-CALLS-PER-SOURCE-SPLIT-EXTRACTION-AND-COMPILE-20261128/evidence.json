@@ -12,7 +12,8 @@
     "summary": "Both ledger.summary and the read-only discovery summary preserve total calls/calls_per_source and add extraction_calls, compile_calls, extraction_calls_per_source. The owner uses the same SELECT and budget. Missing compile_calls column yields three null fields plus calls_split_reason=ledger_compile_calls_column_missing; zero sources yields null extraction ratio.",
     "probe": "Reads data.discovery_summary.llm_calls.extraction_calls_per_source and gates it at 1.5. Reports total calls, compile_calls, extraction_calls_per_source and calls_per_source_basis=extraction. Missing/null/invalid split falls back to the total gate with basis=total.",
     "bff": "Existing owner summary pass-through needs no runtime BFF changes. A real-ledger contract test checks total 2, sources 1, total ratio 2.0 and nested extraction 1, compile 1, extraction ratio 1.0.",
-    "register": "Discovery class instance and coordinator dispositions from conversation 2dc972b7 recorded; no repair/reopen requested for the accepted one-time tombstone cost or 30 outage-closed records."
+    "register": "Discovery class instance and coordinator dispositions from conversation 2dc972b7 recorded; no repair/reopen requested for the accepted one-time tombstone cost or 30 outage-closed records.",
+    "test_clock": "Coordinator reopened this task to fix the required stale-world subprocess test introduced by DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125 (11/18 rule). Its board and health timestamps are now fixed at 2020-01-01. Failure, secret-redaction, dev-login POST and two GET assertions remain. No release-probe clock flag or environment override added. Other subprocess tests either skip before reading data or build freshness relative to datetime.now; in-process calls pass explicit now."
   },
   "baseline_2026_11_28": {
     "provenance": "Dispatch source document, conversation 2dc972b7; .orchestrator/assistant-dev-packets/sources/l2-calls-per-source-split-extraction-and-compile-20261128/EXECUTION_TASKS.md (coordination root). Operator/coordinator measurements, not a new worker-hosted measurement.",
@@ -78,7 +79,7 @@
       "passed": 293,
       "failed": 1,
       "duration_seconds": 103.99,
-      "failure": "test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets (pre-existing static date assumption; see residual finding)"
+      "failure": "test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets (static-date assumption; reproduced before repair and fixed in this reopened task, see resolved_findings)"
     },
     "added_contract_and_fallback": {
       "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_alpha_factory_contract.py::test_owner_step_split_passes_through_board_with_total_contract acceptance/test_discovery_pipeline_day.py::test_missing_or_unreadable_split_keeps_1128_total_failure",
@@ -93,16 +94,21 @@
       "failures": []
     },
     "final_scoped_batch": {
-      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_discovery_summary.py acceptance/test_discovery_pipeline_day.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py -k 'not test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets'",
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_discovery_summary.py acceptance/test_discovery_pipeline_day.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
       "exit": 0,
-      "passed": 295,
-      "deselected": 1,
-      "duration_seconds": 94.48,
-      "deselection_reason": "Only the independently reproduced pre-existing static-date failure, fully reported above and in residual_findings."
+      "passed": 296,
+      "deselected": 0,
+      "duration_seconds": 95.45
     },
     "diff_check": {
       "command": "git diff --check",
       "exit": 0
+    },
+    "stale_world_and_stdlib": {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets acceptance/test_discovery_pipeline_day.py::test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages",
+      "exit": 0,
+      "passed": 2,
+      "duration_seconds": 4.08
     }
   },
   "hosted_acceptance": {
@@ -136,16 +142,18 @@
   },
   "residual_findings": [
     {
-      "class": "RC1 required-check calendar clock / test determinism",
-      "owner": "coordinator to attach to existing RC1 CI timing/calendar class",
-      "finding": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets assumes its fixed 2026-11-28 synthetic world is stale. On 2026-11-28 the probe correctly returns 0 but the test expects 1.",
-      "baseline_reproduction": "Unmodified base 1ae1c6af9f48376b3449fd69690b92c6b7eb8d63 acceptance module/test/probe/fixture exported to a temporary directory, module path verified there, isolated pytest run: 1 failed, exit 1. No task changes needed to reproduce.",
-      "disposition": "Outside this ratio-accounting task; recorded for coordinator routing. Not hidden as a passing full suite."
-    },
-    {
       "class": "RC2 hosted acceptance",
       "finding": "First-full-UTC-day hosted figures require merge/deploy and elapsed observation day; not available in this source delivery.",
       "disposition": "Keep hosted acceptance pending; do not mark accepted from local tests or source review."
+    }
+  ],
+  "resolved_findings": [
+    {
+      "class": "RC1 required-check calendar clock / test determinism",
+      "owner": "Codex, coordinator-directed repair in this task",
+      "finding": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets assumes its fixed 2026-11-28 synthetic world is stale. On 2026-11-28 the probe correctly returns 0 but the test expects 1.",
+      "baseline_reproduction": "Unmodified base 1ae1c6af9f48376b3449fd69690b92c6b7eb8d63 acceptance module/test/probe/fixture exported to a temporary directory, module path verified there, isolated pytest run: 1 failed, exit 1. No task changes needed to reproduce.",
+      "disposition": "Resolved here after coordinator reopened the task: fixed stale timestamps at 2020-01-01, retained assertions, checked other subprocess tests for the same dependency, recorded discovery class instance, and reran the whole focused suite with no exclusions (296 passed)."
     }
   ]
 }
