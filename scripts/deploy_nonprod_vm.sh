@@ -90,6 +90,11 @@ DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"
 # OpenClaw adapter. There is intentionally no generated/local fallback.
 DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
 DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
+# Human-provisioned credential of the Agora paper execution lane
+# (AGORA-PAPER-INTENT-EXECUTION-20261127). Intentionally NOT a deploy gate: when
+# unset, operator-bff rejects the lane and paper-signal-producer keeps its
+# consumer off (not_configured), so a missing secret never rolls back a dev deploy.
+DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN="${DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-}"
 # Optional long-lived Claude CLI credential for the openclaw-gateway
 # container's own `claude -p` calls. Empty means it stays on its persisted
 # interactive-login session.
@@ -478,6 +483,7 @@ Environment overrides:
   DEV_BFF_REQUIRE_EMAIL_VERIFIED
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
+  DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN
   DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN
   DEV_OPENCLAW_ANTHROPIC_API_KEY DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID
   DEV_OPENCLAW_OPENAI_API_KEY DEV_OPENCLAW_OPENAI_API_KEY_2
@@ -588,6 +594,7 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-$DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}"
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES:-$DEV_BFF_STUB_CAPABILITIES}"
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"
+  AGORA_PAPER_EXECUTION_SERVICE_TOKEN="${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-$DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN}"
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-$DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}"
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-$DEV_OPENCLAW_ANTHROPIC_API_KEY}"
@@ -812,6 +819,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_default_role=${DEV_BFF_DEFAULT_ROLE}"
   info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
   info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
+  info "dev_agora_paper_execution_service_token_configured=$([[ -n "${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_claude_code_oauth_token_configured=$([[ -n "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_anthropic_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" ]] && echo true || echo false)"
   info "dev_openclaw_openai_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}" ]] && echo true || echo false)"
@@ -1170,6 +1178,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}")"
   command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}")"
+  command_prefix+=" AGORA_PAPER_EXECUTION_SERVICE_TOKEN=$(shell_quote "${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"
@@ -3111,10 +3120,6 @@ if missing:
     emit("proceed", reason="closed_session_missing", session_date=str(session_date), symbols=missing)
 if admission_failure:
     emit("error", reason="existing_snapshot_admission_failed", detail=admission_failure)
-if now_t.weekday() >= 5:
-    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
-if d_str in holidays:
-    emit("skipped", reason="holiday", checked_at=now_u.isoformat())
 # TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117: a session covered only by provisional collector
 # closes still lacks its official OpenAPI rows. Once the official next-morning publication time has
 # passed, proceed so the existing bounded official refresh ingests them and the snapshot store
@@ -3145,6 +3150,12 @@ if pending_official:
         symbols=sorted({sym for syms in pending_official.values() for sym in syms}),
         checked_at=now_u.isoformat(),
     )
+# Reconcile earlier sessions on nontrading days too, once their official publication is due.
+# With no pending official rows, preserve the normal weekend/holiday skip.
+if now_t.weekday() >= 5:
+    emit("skipped", reason="weekend", checked_at=now_u.isoformat())
+if d_str in holidays:
+    emit("skipped", reason="holiday", checked_at=now_u.isoformat())
 if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
@@ -4286,19 +4297,74 @@ if connector.startswith("tw-finmind-") and not finmind:
 VALIDATE_PY
 }
 
+# A record only describes the stack while the bounded runtime it recorded is still in place. Retires (without
+# restoring anything) a record that (a) was never entered (BR_PHASE=captured, BR_ENTER_COUNT=0) or (b) was
+# superseded by a later release (the running source-ingest image differs from BR_IMAGE_ID, or none of the
+# recorded steady containers exists any more), and only when no pantheon-bounded-refresh-* container exists
+# and the steady posture verifies healthy (steady_posture_problem). Retiring = one receipt line in the log and
+# in BOUNDED_RUNTIME_RETIRED_LOG (capped to its last BOUNDED_RUNTIME_RETIRED_LOG_LINES lines; its name does not
+# match the record glob), then the record directory is deleted, so a dead run leaves at most one receipt.
+# Returns 0 when retired; 1 when the record must be restored as recorded (TW-REFRESH-STALE-BOUNDED-RUNTIME-
+# RECORD-BLOCKS-REFRESH-20261127: run 45985422058 left a captured, never entered record whose image no longer
+# existed, and every later refresh failed trying to restore it).
+bounded_runtime_retire_if_not_in_place() {
+  local dir="$1" current_image="$2" retire_reason="" steady_id steady_left=0 reason="" waited_cids=" " receipt log cap
+  [[ -z "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]] || return 1
+  if [[ "${BR_PHASE:-}" != "entered" && "${BR_ENTER_COUNT:-0}" == "0" ]]; then
+    retire_reason="never_entered"
+  else
+    for steady_id in ${BR_STEADY_IDS:-}; do
+      docker inspect --format '{{.State.Status}}' "${steady_id}" >/dev/null 2>&1 && steady_left=$((steady_left + 1))
+    done
+    if [[ -n "${current_image}" && "${current_image}" != "${BR_IMAGE_ID:-}" ]]; then
+      retire_reason="superseded_by_release"
+    elif [[ -n "${BR_STEADY_IDS:-}" ]] && (( steady_left == 0 )); then
+      retire_reason="superseded_by_release"
+    fi
+  fi
+  [[ -n "${retire_reason}" ]] || return 1
+  steady_posture_problem
+  if [[ -n "${reason}" ]]; then
+    info "bounded runtime record ${dir} looks ${retire_reason} but the steady posture is not healthy (${reason}); restoring it as recorded"
+    return 1
+  fi
+  receipt="bounded runtime record retired: run=${dir##*-} phase=${BR_PHASE:-unknown} enter_count=${BR_ENTER_COUNT:-0} reason=${retire_reason} recorded_image=${BR_IMAGE_ID:-none} current_image=${current_image:-none} record=${dir}"
+  info "${receipt}"
+  log="${BOUNDED_RUNTIME_RETIRED_LOG:-${BOUNDED_RUNTIME_STATE_ROOT:-/tmp}/pantheon-bounded-runtime-retired.log}"
+  cap="${BOUNDED_RUNTIME_RETIRED_LOG_LINES:-50}"
+  if [[ ! -L "${log}" ]]; then
+    { tail -n "$(( cap > 1 ? cap - 1 : 0 ))" "${log}" 2>/dev/null || true; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${receipt}"; } > "${log}.tmp" \
+      && mv -f "${log}.tmp" "${log}" || info "could not append the retirement receipt to ${log}" >&2
+  fi
+  BOUNDED_RUNTIME_RETIRE_REASON="${retire_reason}"
+  BOUNDED_RUNTIME_SUMMARY_JSON="$(python3 -c 'import json,sys
+a=sys.argv[1:]
+print(json.dumps({"retired": {"current_image": a[3], "phase": a[1], "reason": a[2], "recorded_image": a[4], "run_id": a[0]}, "restore_recreates": 0}, sort_keys=True))' \
+    "${dir##*-}" "${BR_PHASE:-unknown}" "${retire_reason}" "${current_image:-}" "${BR_IMAGE_ID:-}")"
+  rm -rf "${dir}"
+  return 0
+}
+
 # Restores the steady posture of ONE bounded runtime from its recorded state: the recorded
 # pre-environment (so neither the run egress union nor the FinMind token stays), the recorded image,
 # the stopped steady controller and projector, then removes created leftovers and checks the counts.
-# Sets BOUNDED_RUNTIME_SUMMARY_JSON. Removes the state directory only when everything succeeded.
+# A record whose bounded runtime is no longer in place is retired instead (bounded_runtime_retire_if_not_in_place).
+# Sets BOUNDED_RUNTIME_SUMMARY_JSON, and BOUNDED_RUNTIME_RESTORE_FAILED_PART (comma separated: record_incomplete,
+# recorded_image_missing, source_ingest_restore, steady_container_start, container_counts, controller_mode) on
+# failure. Removes the state directory only when everything succeeded; a failed restore keeps the record.
 bounded_runtime_restore_from_state() {
-  local dir="$1" restore_rc=0 cid
-  BOUNDED_RUNTIME_SUMMARY_JSON=""
-  [[ -s "${dir}/state.env" && -s "${dir}/pre_env.json" ]] || { info "bounded runtime state ${dir} is incomplete; refusing unverified restore" >&2; return 1; }
+  local dir="$1" restore_rc=0 cid current_image="" parts=() sched_cid sched_mode
+  BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RETIRE_REASON=""; BOUNDED_RUNTIME_RESTORE_FAILED_PART=""
+  [[ -s "${dir}/state.env" && -s "${dir}/pre_env.json" ]] || { info "bounded runtime state ${dir} is incomplete; refusing unverified restore" >&2; BOUNDED_RUNTIME_RESTORE_FAILED_PART="record_incomplete"; return 1; }
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
-  bounded_runtime_record_memory "${dir}" "${cid}"
+  [[ -z "${cid}" ]] || current_image="$(docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null || true)"
   local BR_IMAGE_ID="" BR_STEADY_IDS="" BR_CONTROLLER_MODE="" BR_ENTER_COUNT=0 BR_PEAK_BYTES="" BR_LIMIT_BYTES="" BR_OOM="false" BR_HOSTS="" BR_FINMIND="false" BR_PHASE=""
   # shellcheck disable=SC1091
-  source "${dir}/state.env" || return 1
+  source "${dir}/state.env" || { BOUNDED_RUNTIME_RESTORE_FAILED_PART="record_incomplete"; return 1; }
+  bounded_runtime_retire_if_not_in_place "${dir}" "${current_image}" && return 0
+  bounded_runtime_record_memory "${dir}" "${cid}"
+  # shellcheck disable=SC1091
+  source "${dir}/state.env" || true
   local bounded
   bounded="$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)"
   # shellcheck disable=SC2086
@@ -4306,33 +4372,106 @@ bounded_runtime_restore_from_state() {
   remove_source_ingest_compose_leftovers
   unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
   info "restoring steady collector-host egress posture and source controller to ${BR_CONTROLLER_MODE:-reconcile_only} (bounded runtime of run ${dir##*-}, once)"
-  SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${BR_CONTROLLER_MODE:-reconcile_only}" \
-    manage_source_ingest_refresh_runtime "${dir}/pre_env.json" restore "${BR_IMAGE_ID}" || restore_rc=$?
+  if [[ -n "${BR_IMAGE_ID}" ]] && ! docker image inspect --format '{{.Id}}' "${BR_IMAGE_ID}" >/dev/null 2>&1; then
+    info "recorded source-ingest image ${BR_IMAGE_ID} of run ${dir##*-} no longer exists; source-ingest is not recreated" >&2
+    restore_rc=1; parts+=("recorded_image_missing")
+  else
+    SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${BR_CONTROLLER_MODE:-reconcile_only}" \
+      manage_source_ingest_refresh_runtime "${dir}/pre_env.json" restore "${BR_IMAGE_ID}" || { restore_rc=1; parts+=("source_ingest_restore"); }
+  fi
   # shellcheck disable=SC2086
-  if [[ -n "${BR_STEADY_IDS}" ]]; then docker start ${BR_STEADY_IDS} >/dev/null 2>&1 || restore_rc=1; fi
+  if [[ -n "${BR_STEADY_IDS}" ]]; then docker start ${BR_STEADY_IDS} >/dev/null 2>&1 || { restore_rc=1; parts+=("steady_container_start"); }; fi
   remove_source_ingest_compose_leftovers
-  verify_source_ingest_container_counts || { restore_rc=1; LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
+  verify_source_ingest_container_counts || { restore_rc=1; parts+=("container_counts"); LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
+  if [[ "${BR_CONTROLLER_MODE}" == "collector_steady_pull" ]]; then
+    sched_cid="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
+    sched_mode="$(docker inspect --format '{{json .Config.Env}}' "${sched_cid}" 2>/dev/null | python3 -c 'import json,sys
+try:
+    env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
+except Exception:
+    env={}
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' 2>/dev/null || true)"
+    [[ "${sched_mode}" == "${BR_CONTROLLER_MODE}" ]] || { restore_rc=1; parts+=("controller_mode"); }
+  fi
   BOUNDED_RUNTIME_SUMMARY_JSON="$(python3 -c 'import json,sys
 a=sys.argv[1:]
 print(json.dumps({"enter_recreates": int(a[0] or 0), "restore_recreates": 1, "memory_peak_bytes": int(a[1]) if a[1].isdigit() else None, "memory_limit_bytes": int(a[2]) if a[2].isdigit() else None, "oom_killed": a[3] == "true", "hosts": a[4], "finmind_token": a[5] == "true"}, sort_keys=True))' \
     "${BR_ENTER_COUNT}" "${BR_PEAK_BYTES}" "${BR_LIMIT_BYTES}" "${BR_OOM}" "${BR_HOSTS}" "${BR_FINMIND}")"
-  (( restore_rc == 0 )) && rm -rf "${dir}"
+  if (( restore_rc == 0 )); then
+    rm -rf "${dir}"
+  else
+    BOUNDED_RUNTIME_RESTORE_FAILED_PART="$(IFS=,; printf '%s' "${parts[*]:-unknown}")"
+    info "bounded runtime record ${dir} kept: restore failed at ${BOUNDED_RUNTIME_RESTORE_FAILED_PART}" >&2
+  fi
   return "${restore_rc}"
 }
 
-# Restores every bounded runtime recorded on this host (this run's and any a dead run left).
+# Restores every bounded runtime recorded on this host (this run's and any a dead run left); records that are
+# no longer in place are retired instead. BOUNDED_RUNTIME_FAILED_PARTS names each failed record and its part.
 bounded_runtime_restore_all_states() {
   local dir rc=0 own_dir own_summary=""
   own_dir="$(bounded_runtime_state_dir)"
-  BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RESTORED=0
+  BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RESTORED=0; BOUNDED_RUNTIME_RETIRED=0; BOUNDED_RUNTIME_FAILED_PARTS=""
   while read -r dir; do
     [[ -n "${dir}" ]] || continue
-    bounded_runtime_restore_from_state "${dir}" || rc=1
-    BOUNDED_RUNTIME_RESTORED=$((BOUNDED_RUNTIME_RESTORED + 1))
+    if bounded_runtime_restore_from_state "${dir}"; then
+      if [[ -n "${BOUNDED_RUNTIME_RETIRE_REASON}" ]]; then
+        BOUNDED_RUNTIME_RETIRED=$((BOUNDED_RUNTIME_RETIRED + 1))
+      else
+        BOUNDED_RUNTIME_RESTORED=$((BOUNDED_RUNTIME_RESTORED + 1))
+      fi
+    else
+      rc=1
+      BOUNDED_RUNTIME_RESTORED=$((BOUNDED_RUNTIME_RESTORED + 1))
+      BOUNDED_RUNTIME_FAILED_PARTS+="${BOUNDED_RUNTIME_FAILED_PARTS:+;}run_${dir##*-}:${BOUNDED_RUNTIME_RESTORE_FAILED_PART:-unknown}"
+    fi
     [[ "${dir}" != "${own_dir}" ]] || own_summary="${BOUNDED_RUNTIME_SUMMARY_JSON}"
   done < <(bounded_runtime_list_state_dirs)
   [[ -z "${own_summary}" ]] || BOUNDED_RUNTIME_SUMMARY_JSON="${own_summary}"
   return "${rc}"
+}
+
+# Sets "reason" (dynamically scoped: the caller declares reason and waited_cids) to the first problem of the
+# steady posture, or to empty when source-ingest and its scheduler run healthy in collector_steady_pull with no
+# bounded one-shot container, no created leftover and one container per service.
+steady_posture_problem() {
+  reason=""
+  local s c st md hl bound waited poll="${STEADY_CHECK_HEALTH_POLL_SECONDS:-5}"
+  for s in source-ingest source-ingest-scheduler; do
+    c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${s}" 2>/dev/null | head -n1 || true)"
+    [[ -n "${c}" ]] || { reason="${s}_not_running"; return 0; }
+    hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+    # A service that was just started or recreated is still in its start period: wait for
+    # it to leave "starting" (at most start period + one interval) before judging it.
+    # An already healthy service is judged at once. Waited once per container.
+    if [[ "${hl}" == "starting" && "${waited_cids}" != *" ${c} "* ]]; then
+      waited_cids+="${c} "
+      bound="$(steady_check_health_bound_seconds "${c}")"; waited=0
+      info "${s} health is starting; waiting up to ${bound}s (start period + one interval)"
+      while [[ "${hl}" == "starting" ]] && (( waited < bound )); do
+        sleep "${poll}"; waited=$((waited + poll))
+        hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+      done
+      info "${s} health=${hl:-none} after ${waited}s"
+    fi
+    if [[ -n "${hl}" && "${hl}" != "healthy" ]]; then reason="${s}_${hl}"; return 0; fi
+  done
+  c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
+  md="$(docker inspect --format '{{json .Config.Env}}' "${c}" 2>/dev/null | python3 -c 'import json,sys
+try:
+  env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
+except Exception:
+  env={}
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' || true)"
+  [[ "${md}" == "collector_steady_pull" ]] || { reason="scheduler_mode_${md:-unknown}"; return 0; }
+  if [[ -n "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]]; then
+    reason="bounded_refresh_containers_present"; return 0
+  fi
+  if [[ -n "$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=source-ingest" --filter status=created 2>/dev/null || true)" ]]; then
+    reason="created_leftover_present"; return 0
+  fi
+  verify_source_ingest_container_counts >/dev/null 2>&1 || reason="source_ingest_container_count"
+  return 0
 }
 
 # Probe and, when needed, repair the steady posture after a refresh run ended
@@ -4348,49 +4487,11 @@ execute_steady_posture_check() {
   BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RESTORED=0
   if [[ -n "$(bounded_runtime_list_state_dirs)" ]]; then
     bounded_runtime_restore_all_states || br_restore_rc=$?
-    br_restored="true"
+    # Only a record that was restored (or failed to) counts as the run's restore; a retired one restored nothing.
+    (( BOUNDED_RUNTIME_RESTORED == 0 )) || br_restored="true"
   fi
-  steady_posture_problem() {
-    reason=""
-    local s c st md hl bound waited poll="${STEADY_CHECK_HEALTH_POLL_SECONDS:-5}"
-    for s in source-ingest source-ingest-scheduler; do
-      c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${s}" 2>/dev/null | head -n1 || true)"
-      [[ -n "${c}" ]] || { reason="${s}_not_running"; return 0; }
-      hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
-      # A service that was just started or recreated is still in its start period: wait for
-      # it to leave "starting" (at most start period + one interval) before judging it.
-      # An already healthy service is judged at once. Waited once per container.
-      if [[ "${hl}" == "starting" && "${waited_cids}" != *" ${c} "* ]]; then
-        waited_cids+="${c} "
-        bound="$(steady_check_health_bound_seconds "${c}")"; waited=0
-        info "${s} health is starting; waiting up to ${bound}s (start period + one interval)"
-        while [[ "${hl}" == "starting" ]] && (( waited < bound )); do
-          sleep "${poll}"; waited=$((waited + poll))
-          hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
-        done
-        info "${s} health=${hl:-none} after ${waited}s"
-      fi
-      if [[ -n "${hl}" && "${hl}" != "healthy" ]]; then reason="${s}_${hl}"; return 0; fi
-    done
-    c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
-    md="$(docker inspect --format '{{json .Config.Env}}' "${c}" 2>/dev/null | python3 -c 'import json,sys
-try:
-    env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
-except Exception:
-    env={}
-print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' || true)"
-    [[ "${md}" == "collector_steady_pull" ]] || { reason="scheduler_mode_${md:-unknown}"; return 0; }
-    if [[ -n "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]]; then
-      reason="bounded_refresh_containers_present"; return 0
-    fi
-    if [[ -n "$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=source-ingest" --filter status=created 2>/dev/null || true)" ]]; then
-      reason="created_leftover_present"; return 0
-    fi
-    verify_source_ingest_container_counts >/dev/null 2>&1 || reason="source_ingest_container_count"
-    return 0
-  }
   if (( br_restore_rc != 0 )); then
-    reason="steady_restore_failed:bounded_runtime"
+    reason="steady_restore_failed:bounded_runtime:${BOUNDED_RUNTIME_FAILED_PARTS:-unknown}"
   else
     steady_posture_problem
   fi
@@ -4448,6 +4549,9 @@ json.dump(env,sys.stdout)' > "${env_file}" || restore_rc=1
     else
       reason="bounded_runtime_restored_once"
     fi
+  fi
+  if [[ "${br_restored}" != "true" && "${status}" == "healthy" ]] && (( ${BOUNDED_RUNTIME_RETIRED:-0} > 0 )); then
+    reason="bounded_runtime_record_retired"
   fi
   [[ -n "${output_path}" ]] && BOUNDED_RUNTIME_SUMMARY_JSON="${BOUNDED_RUNTIME_SUMMARY_JSON:-}" STEADY_ORPHAN_ACTION="${STEADY_ORPHAN_ACTION:-none}" STEADY_ORPHAN_PIDS="${STEADY_ORPHAN_PIDS:-}" STEADY_ORPHAN_SECONDS="${STEADY_ORPHAN_SECONDS:-0}" STEADY_CLEANUP_COUNT="${STEADY_CLEANUP_COUNT:-0}" STEADY_CLEANUP_BYTES="${STEADY_CLEANUP_BYTES:-0}" python3 - "${output_path}" "${status}" "${reason}" <<'STEADY_PY'
 import json, os, sys
@@ -4576,7 +4680,7 @@ OUTCOME_PY
       local guard_restore_rc=0
       if [[ -n "$(bounded_runtime_list_state_dirs)" ]]; then bounded_runtime_restore_all_states || guard_restore_rc=$?; fi
       write_bounded_refresh_outcome "not_run" "${guard_reason}" '{"status": "not_run"}'
-      (( guard_restore_rc == 0 )) || write_bounded_refresh_outcome "failed" "steady_restore_failed_at_market_open: ${guard_reason}" '{"status": "failed"}'
+      (( guard_restore_rc == 0 )) || write_bounded_refresh_outcome "failed" "steady_restore_failed_at_market_open (${BOUNDED_RUNTIME_FAILED_PARTS:-unknown}): ${guard_reason}" '{"status": "failed"}'
       trap - EXIT INT TERM
       rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
       return 1
@@ -4701,7 +4805,7 @@ OUTCOME_PY
   else
     # A dead earlier run may have left its bounded runtime: restore it from its record first.
     if [[ "${BOUNDED_RUN_MODE}" == "true" && -n "$(bounded_runtime_list_state_dirs)" ]]; then
-      bounded_runtime_restore_all_states || error "could not restore the bounded runtime a previous run left (bounded_runtime_stale_restore_failed)"
+      bounded_runtime_restore_all_states || error "could not restore the bounded runtime a previous run left (bounded_runtime_stale_restore_failed: ${BOUNDED_RUNTIME_FAILED_PARTS:-unknown})"
     fi
   [[ -n "${steady_env}" ]] || steady_env="$(mktemp)"
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
@@ -7373,6 +7477,8 @@ with_dev_bff_runtime_env() {
   PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+  AGORA_PAPER_EXECUTION_SERVICE_TOKEN="${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-}" \
+  AGORA_PAPER_EXECUTION_TOKEN_PROFILE=hosted \
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY}" \
@@ -7841,15 +7947,44 @@ recreate_steady_service_on_baseline_image() {
   local service="$1" image_id="$2" ref
   [[ -n "${image_id}" ]] || { echo "no baseline image recorded"; return 1; }
   docker image inspect "${image_id}" >/dev/null 2>&1 || { echo "baseline image ${image_id} is not retained"; return 1; }
-  ref="$(docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
-    | SERVICE="${service}" python3 -c '
-import json, os, sys
-try:
-    print((json.load(sys.stdin).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or "")
-except Exception:
-    print("")
-')" || ref=""
-  [[ -n "${ref}" ]] || { echo "compose image reference for ${service} is unavailable"; return 1; }
+  # Keep config stderr in memory; redact before truncation so a clipped secret
+  # cannot escape redaction. Never print resolved config (it contains secrets).
+  ref="$(SERVICE="${service}" python3 - <<'COMPOSE_REF_PY'
+import json
+import os
+import re
+import subprocess
+import sys
+
+result = subprocess.run(
+    ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml",
+     "--profile", "*", "config", "--format", "json"],
+    capture_output=True, text=True, errors="replace")
+ref = ""
+if result.returncode == 0:
+    try:
+        ref = (json.loads(result.stdout).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or ""
+    except (ValueError, AttributeError, TypeError):
+        pass
+if isinstance(ref, str) and ref:
+    print(ref)
+    sys.exit(0)
+stderr = result.stderr
+secret_name = r"(?:[\w-]*(?:token|secret|password|passwd|api[_-]?key|credential|authorization|private[_-]?key)[\w-]*)"
+for name, value in os.environ.items():
+    if value and re.fullmatch(secret_name, name, re.I):
+        stderr = stderr.replace(value, "[REDACTED]")
+stderr = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", stderr)
+stderr = re.sub(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?", "[REDACTED_JWT]", stderr)
+stderr = re.sub(r"(://)[^\s/@]+@", r"\1[REDACTED]@", stderr)
+stderr = re.sub(r"(?i)(\b" + secret_name + r"\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+                r"\1[REDACTED]", stderr)
+excerpt = " ".join(stderr.split())[:300]
+print(f"compose image reference for {os.environ['SERVICE']} is unavailable "
+      f"(compose config exit status={result.returncode}; stderr={excerpt})")
+sys.exit(1)
+COMPOSE_REF_PY
+)" || { printf '%s\n' "${ref}"; return 1; }
   docker tag "${image_id}" "${ref}" >/dev/null 2>&1 || { echo "could not re-point ${ref} at the baseline image"; return 1; }
   docker compose -p pantheon -f docker-compose.yml --profile '*' \
     up -d --no-deps --force-recreate --no-build "${service}" >/dev/null 2>&1 \
@@ -8243,6 +8378,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     fi
     validate_source_refresh_profile
     validate_required_loop_workers
+    # Capture before any pre-rollout recreation (including bootstrap postgres
+    # and the issuer). Compensation must use the images running before deploy,
+    # never the candidate image installed by issuer startup below.
+    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
+      || rollback_dev_bff_on_failure "steady_service_baseline"
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
@@ -8270,9 +8411,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
-    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
-    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
-      || rollback_dev_bff_on_failure "steady_service_baseline"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.

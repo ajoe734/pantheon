@@ -6,11 +6,12 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "194323185cc1784e7daeca62fd7730f1a28bb14b21736b96fd61f2febc808ae9"
+    "specs/agora/v15/capability_manifest_v1_14.json": "520fa0d9542cffaeca71ec9522970506443c2230790e419197cecd843f05b9a6",
+    "specs/agora/v15/governed_intent_handoff.schema.json": "4ad22650e299799e19ca56f3a8aa582e4a44351430201a7df375841f16c5a4ee"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "fffd037e94287f1a91b42a14a9a9c2b7d24f3f7f5a0a6edd1422e22c96eb433f"
+    "sha256": "2d5928da1ea27833bfe06053e56ba9ec7d71d12e604fb17329b6f6d5d72359a1"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -33,6 +34,11 @@
       "POST /bff/agora/servant/sessions/{session_id}/messages",
       "GET /bff/agora/servant/sessions/{session_id}/stream"
     ],
+    "agora.trading.paper-execution.v1": [
+      "POST /bff/agora/trading-intents/{intent_id}/handoffs",
+      "GET /bff/agora/trading-room/paper-book",
+      "GET /bff/agora/trading-room/paper-book/intents/{intent_id}"
+    ],
     "agora.workshop.twelve-block-completeness.v1": [
       "GET /bff/agora/workshops/{workshop_id}/completeness",
       "POST /bff/agora/workshops/{workshop_id}/completeness",
@@ -41,7 +47,11 @@
     "agora.servant.habits.v1": [
       "GET /bff/agora/servant/habits",
       "PATCH /bff/agora/servant/habits"
+    ],
+    "agora.servant.clarify.v1": [
+      "POST /bff/agora/servant/sessions/{session_id}/messages",
+      "GET /bff/agora/servant/sessions/{session_id}/stream"
     ]
   },
-  "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."
+  "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted. AGORA-PAPER-INTENT-EXECUTION-20261127 adds specs/agora/v15/governed_intent_handoff.schema.json (supersedes the frozen v4 handoff schema): paper handoffs target paper_execution; paper_validation_request and management_governance are removed."
 }

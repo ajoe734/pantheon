@@ -73,6 +73,10 @@ def create_trading_room_router(
     workshop_store: Optional[Any] = None,
     decision_lock_owner: Optional[Any] = None,
     imitation_candidate_reader: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
+    paper_book_order_client: Optional[Any] = None,
+    binding_telemetry_client: Optional[Any] = None,
+    paper_book_reader: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Trading-room router — agora.trading.v1.
 
@@ -88,6 +92,10 @@ def create_trading_room_router(
         bff_error=bff_error,
         decision_lock_owner=decision_lock_owner,
         imitation_candidate_reader=imitation_candidate_reader,
+        get_read_store=get_read_store,
+        paper_book_order_client=paper_book_order_client,
+        binding_telemetry_client=binding_telemetry_client,
+        paper_book_reader=paper_book_reader,
     )
     ctx = TradingRoomRouteContext(
         extract_identity=extract_identity,

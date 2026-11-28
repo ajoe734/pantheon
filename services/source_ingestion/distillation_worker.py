@@ -92,10 +92,12 @@ DEFER_TTL_SECONDS = 14 * 86400
 DEFERRAL_BUDGET_EXHAUSTED = "budget_exhausted"
 DEFERRAL_ATTEMPTS_DEFERRED = "attempts_deferred"
 DEFERRAL_EXTRACTION_TICK_BUDGET = "extraction_tick_budget"
+DEFERRAL_EXTRACTION_UNAVAILABLE = "extraction_unavailable"
 PLANNED_DEFERRAL_REASONS = frozenset({
     DEFERRAL_BUDGET_EXHAUSTED,
     DEFERRAL_ATTEMPTS_DEFERRED,
     DEFERRAL_EXTRACTION_TICK_BUDGET,
+    DEFERRAL_EXTRACTION_UNAVAILABLE,
 })
 # A started job's lease covers one extraction call (its deadline) plus this.
 EXTRACTION_LEASE_MARGIN_SECONDS = 60.0
@@ -241,6 +243,18 @@ _VOLATILE_VERSION_METADATA_KEYS: tuple[str, ...] = (
     *_VOLATILE_RUN_METADATA_KEYS,
     "raw_storage_refs",
 )
+# Paths relative to SourceRecord.metadata. Keep this separate from the two
+# historical projections above: committed jobs may still carry either digest.
+# Only these leaves vary per collector run; PIT event time, collector policy,
+# content_hash and all other governed fields remain part of version identity.
+_VOLATILE_COLLECTOR_METADATA_PATHS: tuple[tuple[str, ...], ...] = (
+    ("available_time",),
+    ("ingest_time",),
+    ("pit", "available_time"),
+    ("raw_uri",),
+    ("collector", "run_id"),
+    ("collector", "bundle_sha256"),
+)
 
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
@@ -250,10 +264,23 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
 def _source_version_identity_with_exclusions(
     source: SourceRecord,
     excluded_keys: Sequence[str],
+    excluded_paths: Sequence[tuple[str, ...]] = (),
 ) -> dict[str, Any]:
     metadata = dict(source.metadata)
     for volatile_key in excluded_keys:
         metadata.pop(volatile_key, None)
+    for path in excluded_paths:
+        parent = metadata
+        for key in path[:-1]:
+            child = parent.get(key)
+            if not isinstance(child, Mapping):
+                break
+            # Copy each traversed mapping so projecting never mutates the
+            # committed snapshot (including its first-seen PIT timestamps).
+            parent[key] = dict(child)
+            parent = parent[key]
+        else:
+            parent.pop(path[-1], None)
     return {
         "source_id": source.source_id,
         "connector_id": source.connector_id,
@@ -267,16 +294,20 @@ def _source_version_identity_with_exclusions(
 def source_version_identity(source: SourceRecord) -> dict[str, Any]:
     """Return the content projection that defines one normalized source version.
 
-    Run-local correlation fields and batch-scoped raw archive references are
-    deliberately excluded so that re-ingesting the same normalized content in a
+    Run-local correlation fields, collector observations and raw archive
+    references are deliberately excluded so that re-ingesting the same content in a
     later run maps to the same version, while a revised title, reference, body,
     content hash, or governed metadata creates a distinct event and
-    distillation job.
+    distillation job. Top-level created_at and trace_id are already absent from
+    every projection. First-seen available_time is read from the immutable
+    distillation_source_versions.payload_json by source_for_job(), not from this
+    projection or the latest connector observation.
     """
 
     return _source_version_identity_with_exclusions(
         source,
         _VOLATILE_VERSION_METADATA_KEYS,
+        _VOLATILE_COLLECTOR_METADATA_PATHS,
     )
 
 
@@ -300,11 +331,22 @@ def _legacy_raw_refs_source_version_digest(source: SourceRecord) -> str:
 
 
 def source_version_digest_matches(source: SourceRecord, digest: str) -> bool:
-    """Return True when ``digest`` matches the current or pre-repair projection."""
+    """Accept current, pre-collector-repair and pre-raw-refs-repair digests.
+
+    Validate historical digests against their committed snapshot, whose run
+    fields produced them. Admission compares current content projections and
+    resolves later observations to that original digest without re-keying jobs.
+    """
 
     if not digest:
         return False
     if source_version_digest(source) == digest:
+        return True
+    previous_identity = _canonical_json(
+        _source_version_identity_with_exclusions(source, _VOLATILE_VERSION_METADATA_KEYS)
+    )
+    previous_digest = "sha256:" + hashlib.sha256(previous_identity.encode("utf-8")).hexdigest()
+    if previous_digest == digest:
         return True
     if "raw_storage_refs" not in source.metadata:
         return False
@@ -1532,6 +1574,7 @@ class DistillationJobQueue:
         priority_by_tenant: Mapping[str, DemandPriority] | None = None,
         job_ids: Sequence[str] | None = None,
         superseded_out: list[str] | None = None,
+        exclude_job_ids: Sequence[str] = (),
     ) -> list[DistillationJob]:
         """Claim up to ``limit`` due jobs without reading the whole backlog.
 
@@ -1568,6 +1611,10 @@ class DistillationJobQueue:
                        )
                     """
                     tenant_params = (tenant,)
+                if exclude_job_ids:
+                    placeholders = ",".join("?" for _ in exclude_job_ids)
+                    tenant_clause += f" AND job_id NOT IN ({placeholders})"
+                    tenant_params += tuple(exclude_job_ids)
                 selected: dict[str, sqlite3.Row] = {}
                 if job_ids is not None:
                     explicit_ids = [str(jid) for jid in job_ids if str(jid)]
@@ -3698,6 +3745,7 @@ class DistillationWorker:
         self._tick_extraction_seconds = 0.0
         self._tick_extractor_answered = False
         self._tick_extractor_unavailable = False
+        self._tick_adapter_unavailable = False
         self._retry_base_seconds = max(0.0, float(retry_base_seconds))
         self._registry_sync = registry_sync
 
@@ -3753,18 +3801,10 @@ class DistillationWorker:
             for tenant in self._queue.due_tenants(now=effective_now, tenant_id=tenant_id):
                 priorities[tenant] = self._demand_reader.read(tenant, now=effective_now)
         superseded_versions: list[str] = []
-        claimed = self._queue.claim_due(
-            worker_id=self._worker_id,
-            lease_seconds=self._lease_seconds,
-            now=now,
-            limit=limit,
-            tenant_id=tenant_id,
-            priority_by_tenant=priorities,
-            superseded_out=superseded_versions,
-        )
         self._tick_extraction_seconds = 0.0
         self._tick_extractor_answered = False
         self._tick_extractor_unavailable = False
+        self._tick_adapter_unavailable = False
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
         deferred = extraction_retried = 0
@@ -3815,8 +3855,24 @@ class DistillationWorker:
                 elif delivery == "dead_letter":
                     dead_lettered += 1
 
-        run_batch(claimed)
-        phase1_job_ids = {job.job_id for job in claimed}
+        # Claim one job at a time while L2 is enabled: a socket/policy failure
+        # must leave the rest of the backlog unclaimed for the next tick.
+        claimed: list[DistillationJob] = []
+        phase1_job_ids: set[str] = set()
+        while len(claimed) < max(0, int(limit)):
+            batch = self._queue.claim_due(
+                worker_id=self._worker_id, lease_seconds=self._lease_seconds, now=now,
+                limit=1 if self._hypothesis_extractor is not None else max(0, int(limit)),
+                tenant_id=tenant_id, priority_by_tenant=priorities,
+                superseded_out=superseded_versions, exclude_job_ids=tuple(phase1_job_ids),
+            )
+            if not batch:
+                break
+            claimed.extend(batch)
+            phase1_job_ids.update(job.job_id for job in batch)
+            run_batch(batch)
+            if self._tick_adapter_unavailable:
+                break
 
         # Phase 2: after all due fresh records have run, redrive newest-version
         # extraction-unavailable dead letters and re-attempt newest-version
@@ -3827,7 +3883,7 @@ class DistillationWorker:
             and processed < max(0, int(limit))
             and self._tick_extraction_seconds < self._tick_extraction_budget
         ):
-            if self._tick_extractor_unavailable and not self._tick_extractor_answered:
+            if self._tick_adapter_unavailable or (self._tick_extractor_unavailable and not self._tick_extractor_answered):
                 break
             ledger = getattr(self._hypothesis_extractor, "ledger", None)
             remaining_fn = getattr(ledger, "remaining_daily_calls", None)
@@ -3836,7 +3892,7 @@ class DistillationWorker:
             batch_budget = min(remaining_slots, remaining_cap)
             if batch_budget <= 0:
                 break
-            step_limit = 1 if not self._tick_extractor_answered else batch_budget
+            step_limit = 1  # stop before another claim after adapter unavailability
             if self._queue.dead_letter_count():
                 dl_out = self._queue.redrive_extraction_unavailable_dead_letters(
                     requested_by=self._created_by,
@@ -4145,6 +4201,13 @@ class DistillationWorker:
                         outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 finally:
                     self._tick_extraction_seconds += time.monotonic() - started
+                if outcome.status == DEFERRAL_EXTRACTION_UNAVAILABLE:
+                    self._tick_adapter_unavailable = True
+                    self._queue.defer_budget(
+                        job, now=_timestamp(now) if now is not None else self._queue._now(),
+                        reason=DEFERRAL_EXTRACTION_UNAVAILABLE, next_window=False,
+                    )
+                    return "deferred", DEFERRAL_EXTRACTION_UNAVAILABLE
                 if outcome.status == "unavailable":
                     self._tick_extractor_unavailable = True
                 elif outcome.status in ("card", "no_hypothesis", "rejected", "failed") and outcome.detail != "cached":
@@ -4215,6 +4278,13 @@ class DistillationWorker:
                         )
                     finally:
                         self._tick_extraction_seconds += time.monotonic() - compile_started
+                    if compiled.status == DEFERRAL_EXTRACTION_UNAVAILABLE:
+                        self._tick_adapter_unavailable = True
+                        self._queue.defer_budget(
+                            job, now=_timestamp(now) if now is not None else self._queue._now(),
+                            reason=DEFERRAL_EXTRACTION_UNAVAILABLE, next_window=False,
+                        )
+                        return "deferred", DEFERRAL_EXTRACTION_UNAVAILABLE
                     if compiled.status in (DEFERRAL_BUDGET_EXHAUSTED, DEFERRAL_ATTEMPTS_DEFERRED):
                         self._queue.defer_budget(
                             job,

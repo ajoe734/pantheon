@@ -1347,6 +1347,20 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/paper-book",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/paper-book",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/paper-book/intents/{param}",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/paper-book/intents/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/trading-room/strategies/{param}",
         "method": "GET",
         "path": "/bff/agora/trading-room/strategies/{param}",
@@ -2576,6 +2590,13 @@
         "key": "GET /internal/agora/dataset-handoffs",
         "method": "GET",
         "path": "/internal/agora/dataset-handoffs",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
+        "key": "GET /internal/agora/paper-execution/handoffs",
+        "method": "GET",
+        "path": "/internal/agora/paper-execution/handoffs",
         "status": "implemented"
       },
       {
@@ -3888,6 +3909,13 @@
         "status": "implemented"
       },
       {
+        "family": "unknown",
+        "key": "POST /internal/agora/paper-execution/handoffs/{param}/state",
+        "method": "POST",
+        "path": "/internal/agora/paper-execution/handoffs/{param}/state",
+        "status": "implemented"
+      },
+      {
         "family": "management-console",
         "key": "PUT /bff/management/data-sources/{param}/schedule",
         "method": "PUT",
@@ -3924,7 +3952,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-11-27",
+    "backend_snapshot_date": "2026-11-28",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3946,17 +3974,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 688,
-    "failure_count": 557,
+    "backend_routes": 692,
+    "failure_count": 561,
     "failures": {
-      "backend_missing_frontend": 556,
+      "backend_missing_frontend": 560,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 557,
+    "mode_failure_count": 561,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

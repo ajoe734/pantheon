@@ -622,6 +622,182 @@ def verify_checksum(lock: Dict[str, Any]) -> bool:
     return lock.get("checksum") == canonical_checksum(lock)
 
 
+def apply_paper_proxy_fill_to_decision_lock(
+    lock: Mapping[str, Any],
+    fill: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Populate a decision lock's ``human_actual`` arm with a paper-book fill as a
+    ``pantheon_paper_proxy`` observation (never a real or verified broker fill).
+    """
+    if not isinstance(lock, Mapping):
+        raise DecisionLockInvalidError("decision_lock_missing")
+    if not isinstance(fill, Mapping):
+        raise DecisionLockInvalidError("paper_proxy_fill_missing")
+
+    verdict = _clean(lock.get("trading_room_verdict"))
+    decision = _clean(lock.get("decision"))
+    existing_kind = _clean(lock.get("execution_observation_kind"))
+    if (
+        existing_kind == "declared_no_trade"
+        or verdict in {"reject", "defer", "shadow"}
+        or decision in {"reject", "defer", "no_trade"}
+    ):
+        raise DecisionLockInvalidError("declared_no_trade_cannot_claim_fill")
+
+    requested_kind = _clean(fill.get("execution_observation_kind")) or "pantheon_paper_proxy"
+    if requested_kind in ACTUAL_FILL_KINDS or requested_kind != "pantheon_paper_proxy":
+        raise DecisionLockInvalidError(f"paper_proxy_fill_requires_pantheon_paper_proxy:{requested_kind}")
+    if (
+        fill.get("actual_fill_claimed") is True
+        or fill.get("execution_verified") is True
+        or fill.get("is_real_fill") is True
+    ):
+        raise DecisionLockInvalidError("paper_proxy_fill_cannot_claim_real_fill")
+    environment = _clean(fill.get("environment") or "paper").lower()
+    if environment != "paper":
+        raise DecisionLockInvalidError(f"paper_proxy_fill_must_be_paper_environment:{environment}")
+
+    broker_order_id = _clean(fill.get("broker_order_id") or fill.get("order_id")) or None
+    signal_id = _clean(fill.get("signal_id") or fill.get("client_order_id")) or None
+    handoff_id = _clean(fill.get("handoff_id")) or None
+    intent_id = _clean(fill.get("intent_id")) or None
+    fill_id = (
+        _clean(fill.get("fill_id"))
+        or (f"pfill-{broker_order_id}" if broker_order_id else "")
+        or (f"pfill-{signal_id}" if signal_id else "")
+        or (f"pfill-{handoff_id}" if handoff_id else "")
+        or None
+    )
+    runtime_binding_id = _clean(fill.get("runtime_binding_id") or fill.get("binding_id")) or None
+    runtime_id = _clean(fill.get("runtime_id")) or None
+    capital_pool_id = _clean(fill.get("capital_pool_id")) or None
+    servant_persona_id = _clean(fill.get("servant_persona_id") or fill.get("persona_id")) or None
+    symbol = _clean(fill.get("symbol")) or _clean(lock.get("target_instrument")) or None
+    side = _clean(fill.get("side")) or None
+    fill_status = _clean(fill.get("fill_status") or fill.get("status") or "filled") or "filled"
+
+    raw_qty = fill.get("quantity") if fill.get("quantity") is not None else fill.get("qty")
+    raw_fill_qty = fill.get("fill_qty") if fill.get("fill_qty") is not None else raw_qty
+    raw_fill_price = fill.get("fill_price") if fill.get("fill_price") is not None else fill.get("price")
+
+    def _opt_float(val: Any) -> Optional[float]:
+        if val is None or val == "":
+            return None
+        try:
+            num = float(val)
+        except (TypeError, ValueError) as exc:
+            raise DecisionLockInvalidError("paper_proxy_fill_numeric_invalid") from exc
+        if not math.isfinite(num):
+            raise DecisionLockInvalidError("paper_proxy_fill_numeric_invalid")
+        return num
+
+    qty_val = _opt_float(raw_qty)
+    fill_qty_val = _opt_float(raw_fill_qty)
+    if qty_val is None and fill_qty_val is not None:
+        qty_val = fill_qty_val
+    fill_price_val = _opt_float(raw_fill_price)
+    filled_at = _clean(fill.get("filled_at") or fill.get("updated_at")) or None
+
+    ref_token = broker_order_id or signal_id or handoff_id or fill_id
+    existing_refs = [str(r) for r in (lock.get("fill_refs") or []) if _clean(r)]
+    for candidate_ref in (fill.get("fill_refs") or []):
+        clean_ref = _clean(candidate_ref)
+        if clean_ref and clean_ref not in existing_refs:
+            existing_refs.append(clean_ref)
+    if ref_token:
+        canonical_ref = f"paper-fill:{ref_token}"
+        if canonical_ref not in existing_refs:
+            existing_refs.append(canonical_ref)
+
+    human_decision_id_val = _clean(lock.get("human_decision_id") or fill.get("human_decision_id")) or None
+    paper_fill_record: Dict[str, Any] = {
+        "fill_id": fill_id,
+        "decision_id": human_decision_id_val,
+        "human_decision_id": human_decision_id_val,
+        "arm": "human_actual",
+        "broker_order_id": broker_order_id,
+        "signal_id": signal_id,
+        "handoff_id": handoff_id,
+        "intent_id": intent_id,
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": capital_pool_id,
+        "servant_persona_id": servant_persona_id,
+        "symbol": symbol,
+        "side": side,
+        "quantity": qty_val,
+        "fill_qty": fill_qty_val,
+        "fill_price": fill_price_val,
+        "filled_at": filled_at,
+        "fill_status": fill_status,
+        "environment": "paper",
+        "settlement_source": "pantheon_paper_proxy",
+        "execution_observation_kind": "pantheon_paper_proxy",
+        "execution_display_label": DISPLAY_LABELS["pantheon_paper_proxy"],
+        "execution_confidence": DEFAULT_CONFIDENCE["pantheon_paper_proxy"],
+        "execution_verified": False,
+        "actual_fill_claimed": False,
+        "is_real_fill": False,
+        "fill_source": "pantheon_paper_book",
+    }
+
+    updated: Dict[str, Any] = json.loads(json.dumps(dict(lock), default=str))
+    arms = dict(updated.get("arms")) if isinstance(updated.get("arms"), Mapping) else {}
+    human_actual = dict(arms.get("human_actual")) if isinstance(arms.get("human_actual"), Mapping) else {}
+    action_val = (
+        _clean(human_actual.get("action"))
+        or _clean(human_actual.get("decision"))
+        or decision
+        or "enter"
+    )
+    human_actual.update(
+        {
+            "available": True,
+            "action": action_val,
+            "decision": _clean(human_actual.get("decision")) or decision or action_val,
+            "trading_room_verdict": _clean(human_actual.get("trading_room_verdict")) or verdict or "approve",
+            "execution_observation_kind": "pantheon_paper_proxy",
+            "execution_display_label": DISPLAY_LABELS["pantheon_paper_proxy"],
+            "execution_confidence": DEFAULT_CONFIDENCE["pantheon_paper_proxy"],
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+            "environment": "paper",
+            "fill_source": "pantheon_paper_book",
+            "fill_status": fill_status,
+            "fill_id": fill_id,
+            "broker_order_id": broker_order_id,
+            "signal_id": signal_id,
+            "handoff_id": handoff_id,
+            "intent_id": intent_id,
+            "runtime_binding_id": runtime_binding_id,
+            "runtime_id": runtime_id,
+            "capital_pool_id": capital_pool_id,
+            "servant_persona_id": servant_persona_id,
+            "symbol": symbol,
+            "side": side,
+            "quantity": qty_val,
+            "fill_qty": fill_qty_val,
+            "fill_price": fill_price_val,
+            "price": fill_price_val,
+            "filled_at": filled_at,
+            "fill_refs": list(existing_refs),
+            "paper_fill": dict(paper_fill_record),
+        }
+    )
+    arms["human_actual"] = human_actual
+    updated["arms"] = arms
+    updated["execution_observation_kind"] = "pantheon_paper_proxy"
+    updated["execution_display_label"] = DISPLAY_LABELS["pantheon_paper_proxy"]
+    updated["execution_confidence"] = DEFAULT_CONFIDENCE["pantheon_paper_proxy"]
+    updated["execution_verified"] = False
+    updated["actual_fill_claimed"] = False
+    updated["fill_refs"] = list(existing_refs)
+    updated["paper_fill"] = dict(paper_fill_record)
+    updated["checksum"] = canonical_checksum(updated)
+    return updated
+
+
 _POLICY_LEARNING_URL_ENVS = (
     "PANTHEON_POLICY_LEARNING_API_URL",
     "POLICY_LEARNING_API_URL",
@@ -962,6 +1138,7 @@ __all__ = [
     "TRADER_DECLARABLE_KINDS",
     "VERDICT_TO_EVIDENCE_KIND",
     "a4_decision",
+    "apply_paper_proxy_fill_to_decision_lock",
     "build_decision_lock",
     "build_decision_time_snapshot",
     "build_default_imitation_candidate_resolver",

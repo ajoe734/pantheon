@@ -1,0 +1,102 @@
+{
+  "task_id": "AGORA-SERVANT-CLARIFY-20261127",
+  "title": "Agora servant asks a typed clarification outside the workshop",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (§5, §11; T3 in §12)",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T3)",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "review_independence": {
+    "owner_family": "Antigravity",
+    "reviewer_family": "Claude",
+    "cross_family": true
+  },
+  "delivery_state": "source_and_tests_verified_hosted_proof_pending_deploy",
+  "acceptance_criteria": {
+    "ac1_typed_clarification_card_matching_workshop_decision": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/clarification.py::normalize_clarification_card — normalizes a servant turn clarification into the exact WorkshopNextDecisionV114 shape of AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127 (decision_id, question_id, question, text, why_now, why_it_matters, resolves, target_blocks, 2 to 4 options with option_id/id/label/text/description/is_default, answer_options, default_option_id, servant_default {option_id, label, summary, provisional_assumption}, score_total, freeform_allowed, defer_allowed, style_dimension)",
+        "services/control-plane/bff/agora/servant/tool_turn.py::SERVANT_TURN_SCHEMA — adds action='clarify' and typed clarification object (2 to 4 options) using only OpenClaw adapter-enforced schema keywords",
+        "services/control-plane/bff/agora/servant/router.py::_message_event & get_servant_session — exposes clarification and cards on servant.message.completed SSE events and pending_clarification on GET /bff/agora/servant/sessions/{session_id}"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_clarification_card_shape_matches_workshop_decision_v114",
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_clarification_option_bounds_2_to_4_and_adapter_schema_contract",
+        "services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py"
+      ]
+    },
+    "ac2_asks_only_when_choice_changes_data_or_result_else_states_assumption": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/clarification.py::normalize_clarification_card & extract_provisional_assumption — rejects clarification when changes_data_or_result is False and extracts provisional assumption",
+        "services/control-plane/bff/agora/servant/tool_turn.py::run_tool_turn — suppresses non-impactful clarifications, records stated_assumptions, re-prompts with clarification_allowed=False when needed, and prefixes stated assumptions (（推定假設：…）) on direct answers"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_servant_asks_clarification_when_answer_changes_data_or_result",
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_servant_states_assumption_and_answers_when_choice_does_not_change_data_or_result"
+      ]
+    },
+    "ac3_at_most_one_per_turn_and_at_most_two_in_a_row": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/clarification.py::MAX_CLARIFICATIONS_PER_TURN (1), MAX_CONSECUTIVE_CLARIFICATIONS (2), count_consecutive_clarifications",
+        "services/control-plane/bff/agora/servant/tool_turn.py::run_tool_turn — terminates turn immediately on one clarification card; when consecutive_clarifications >= 2, sets clarification_allowed=False, blocks any 3rd consecutive clarification, adopts provisional defaults as stated_assumptions, answers directly, and resets streak to 0"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_at_most_one_clarification_per_turn",
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_at_most_two_clarifications_in_a_row_before_answering_with_stated_assumptions"
+      ]
+    },
+    "ac4_trader_choice_session_event_and_style_habit_facts": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/clarification.py::resolve_servant_clarification_choice, build_style_habit_fact, collect_clarification_habit_facts",
+        "services/control-plane/bff/agora/servant/router.py::post_servant_session_message & _events_for_session — accepts explicit clarification_choice or implicit option match on POST /bff/agora/servant/sessions/{session_id}/messages (422 on invalid option), records servant.clarification.answered session event, and emits habit_fact for style dimensions (horizon -> holding_period/entry_holding, universe -> rejected_candidates/market_scope, risk_tolerance -> position_size/sizing_leverage) for AGORA-TRADER-HABIT-PROFILE-20261127"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_trader_choice_is_session_event_and_style_choices_emit_habit_facts"
+      ]
+    },
+    "ac5_hosted_proof_and_walkthrough": {
+      "status": "pending_post_merge_dev_deploy",
+      "local_walkthrough": {
+        "ambiguous_request": "請分析 2330 的分點主力動向",
+        "clarification_decision_id": "clarify_2330_horizon_side",
+        "option_a_query": "/api/source-ingest/broker-branch-flow?symbols=2330&date_from=2026-11-26&side=buy&top=3",
+        "option_a_answer_excerpt": "依您選擇的「A. 短線當日買方動能（最新交易日買超前 3 大分點）」，2330 買超主力第一名為 60,000股。",
+        "option_b_query": "/api/source-ingest/broker-branch-flow?symbols=2330&date_from=2026-11-26&side=sell&top=3",
+        "option_b_answer_excerpt": "依您選擇的「B. 短線當日賣方出貨壓力（最新交易日賣超前 3 大分點）」，2330 賣超主力第一名為 -60,000股。"
+      },
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_ambiguous_request_yields_clarification_and_chosen_option_changes_answer",
+        "services/control-plane/bff/tests/test_agora_servant_clarify.py::test_v1_14_bundle_records_servant_clarify_contract"
+      ]
+    }
+  },
+  "contracts": {
+    "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml (ServantMessageRequestV114.clarification_choice, ServantMessageCompletedEventData.clarification/cards/stated_assumptions, ServantStyleHabitFactV114, ServantClarificationAnsweredEventData)",
+    "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json (route family agora.servant.clarify.v1)",
+    "backend_routes_manifest": "unchanged: no new BFF route path (scripts/bff_route_manifest_backend.py --check: routes match snapshot)",
+    "route_diff_baseline": "unchanged (scripts/bff_route_diff.py --check-baseline: matches)"
+  },
+  "runtime_budget": {
+    "new_persistent_stores_or_tables": "none",
+    "new_recurring_jobs_or_timers": "none",
+    "writer": "existing Agora owner append_session_message on servant sessions carries clarification metadata (~1 KB) on assistant clarification turns and clarification_choice + style habit_fact (~0.8 KB) on user choice turns",
+    "growth_and_cap": "bounded by the existing T1 session cap (500 messages per session, 4 KB per message) and MAX_CONSECUTIVE_CLARIFICATIONS=2 per clarification streak",
+    "cleanup": "existing T1 purge of servant sessions untouched for 180 days",
+    "cadence": "on demand, at most one clarification per turn and two in a row"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_servant_clarify.py services/control-plane/bff/tests/test_agora_trader_habit_profile.py services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/agora/servant/ services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py",
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report.json",
+      ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
+    ],
+    "result": "synced with origin/dev (7a366a60b, preserving IMITATION-TRADER-SHADOW-COMPARISON-20261127 #7988, PAPER-FLEET-RECONCILER-STATE-READ-NO-CYCLE-LOCK-20261127 #7990, PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 #7983, OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127 #7991, DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127 #7989, PAPER-RECONCILER-STATE-READ-WITHOUT-CYCLE-LOCK-20261127 #7987, AGORA-TRADER-HABIT-PROFILE-20261127 #7984, and OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127 #7952); all servant, clarify, habit profile, BFF test architecture, tenant fallback, and adapter schema contract suites green; storage manifest check green; route manifest matches snapshot; route diff baseline matches"
+  },
+  "residual_findings": []
+}

@@ -1,0 +1,88 @@
+{
+  "task_id": "SOURCE-VERSION-DIGEST-COLLECTOR-RUN-FIELDS-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "delivery_state": "source implementation; independent review, merge, deployment and hosted acceptance pending",
+  "root_cause_class": "RC2 / RC3; existing DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127 instance",
+  "source_measurement": {
+    "authority": "Coordinator 2dc972b7 read-only report in .orchestrator/assistant-dev-packets/sources/source-version-digest-collector-run-fields-20261127/EXECUTION_TASKS.md (canonical status root); not a new worker-hosted observation",
+    "reported_at": "2026-11-27T22:55:00Z",
+    "backend": "d7c8c594e",
+    "sample_sources": 30,
+    "consecutive_version_pairs": 301,
+    "changed_title_or_body_pairs": 0,
+    "changed_bundle_hash_pairs": 271,
+    "all_pairs_changed": [
+      "created_at",
+      "metadata.available_time",
+      "metadata.ingest_time",
+      "metadata.pit.available_time",
+      "metadata.raw_uri",
+      "metadata.collector.run_id",
+      "metadata.source_ingest_run_id",
+      "metadata.trace_id",
+      "trace_id"
+    ],
+    "news_outbox_rows_per_day": 1677,
+    "news_distinct_sources_per_day": 352,
+    "superseded_closures_per_day": 503,
+    "queue_file_MB": 351,
+    "all_source_version_payload_MB": 121,
+    "news_payload_MB_per_day": null,
+    "missing_metric": "The source report measured total payload MB, not news payload MB/day. The executable before/after probe measures the latter after deployment; 121 MB is not a daily rate."
+  },
+  "implementation": {
+    "run_fields": "One explicit leaf-path list beside _VOLATILE_RUN_METADATA_KEYS excludes available_time, ingest_time, pit.available_time, raw_uri, collector.run_id and collector.bundle_sha256; the existing lists still exclude ingest_run_id, source_ingest_run_id, metadata.trace_id and raw_storage_refs. Top-level created_at and trace_id were already absent from all identity projections.",
+    "preserved_identity": "title, content_ref, body, content_hash, PIT event_time/validated, tenant, access/license/governance metadata and all other collector policy/status fields still change identity. Nested mappings are copied before excluding leaves; the source snapshot is never mutated.",
+    "first_seen": "The first INSERT into distillation_source_versions retains payload_json via ON CONFLICT DO NOTHING. _resolve_committed_source_digest compares the new content projection and selects the earliest equivalent committed version. source_for_job reads that committed payload, including metadata.available_time and metadata.pit.available_time; run_pending uses that snapshot instead of a caller latest-record map.",
+    "legacy": "source_version_digest_matches accepts current, pre-collector-repair and pre-raw-refs-repair projections against the stored snapshot. Admission retains the old source_digest/job_id/event_id/idempotency_key; no migration, re-key or replay. Registry payload validation still accepts those exact old references. input_answers uses extraction_input_digest (prompt/schema/text), not source_version_digest; its card/event references are left untouched.",
+    "collector": "Producer and connector publication/mapping remain unchanged. Observation fields and raw paths remain available for audit; only version identity ignores the run leaves."
+  },
+  "validation": {
+    "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_hypothesis_extraction.py",
+    "status": "passed: terminal exit 0; 399 passed, 1 skipped, 2 existing jsonschema.RefResolver deprecation warnings in 120.01s",
+    "regressions": "20 new cases passed: actual verified collector-adapter outputs with different runs, fetch/PIT/ingest times, raw paths and batch hashes; first-seen snapshot after restart; changed content/governed metadata; both historical digest generations, pending and terminal rows, Registry lineage and preserved ledger cards/input_answers. Fixtures reproduce the measured field shape; they are not copies of undisclosed hosted payloads.",
+    "initial_attempts": "First combined run: 258 passed, 20 failed, 1 skipped, exit 1 (new fixture used nonexistent pull_bundles). Focused reruns exposed test-only event_id accessor and missing seed hypothesis issues; fixed before the 20-case passing rerun. None counted as acceptance passes.",
+    "focused_terminal_log": "/tmp/source-version-digest-focused-tests.log (worker-local; result summarized here)",
+    "probe_validation": "Executed the committed evidence probe against an actual temporary DistillationJobQueue database: positive control 4/2 versions before -> 2/2 after, closures 2 -> 0, payload bytes 996 -> 496, exit 0; negative control 3/2 versions after (1.5/source), exit 1; incomplete/future hosted window refused, exit 1. This is synthetic probe validation, not hosted evidence."
+  },
+  "runtime_budget": {
+    "new_recurring_jobs_or_writers": 0,
+    "cadence": "Existing hourly collector/news ingestion and existing controller cadence unchanged.",
+    "count_and_growth": "Baseline ~1677 news version/outbox pairs per day for 352 sources (~4.76/source). For unchanged content, one committed version/job per distinct source; about 352/day at this scale, acceptance <=1.2 per distinct source (<=422 rows/day if 352 sources). Roughly 79% fewer version/job inserts for an unchanged cohort. Changed content/governed metadata still adds legitimate versions.",
+    "size": "Payload bytes per inserted version unchanged; no new columns or row kinds. Hosted baseline total queue 351 MB / version payload 121 MB, not MB/day. Before/after daily UTF-8 payload bytes are reported by the executable probe; no invented daily byte measurement.",
+    "cap_and_cleanup": "Existing 7-day terminal payload compaction and inbox removal (default batch 500 per prune), 30-day resolved-DLQ cleanup. Source-version/outbox identity tombstones are retained indefinitely and have no hard row cap; this task lowers their insertion rate. New identities first admitted after repair remain directly deduplicable after compaction.",
+    "storage_registration": "No new writer to register; existing source-version/outbox writer only inserts fewer rows."
+  },
+  "hosted_acceptance": {
+    "status": "pending: source has not been independently reviewed, merged or deployed; no 24h post-switch observation exists",
+    "preconditions": "Coordinator verifies hosted manifest and every expected service at the exact merged version, records actual switch epoch and deployment evidence, then runs the read-only probe >=24h later against /data/source-ingest/distill_job_queue.jsonl. Supply epoch from actual hosted switch, not a local commit time. Keep output with exact hosted identities. This is post-switch acceptance, not a blocking dev deployment gate.",
+    "command": "python3 -c 'import json,sys; exec(json.load(open(sys.argv.pop(1)))[\"hosted_acceptance\"][\"probe_python\"])' docs/deployment/evidence/SOURCE-VERSION-DIGEST-COLLECTOR-RUN-FIELDS-20261127/evidence.json /data/source-ingest/distill_job_queue.jsonl ACTUAL_HOSTED_SWITCH_EPOCH",
+    "probe_python": "import json, sqlite3, sys, time\nfrom pathlib import Path\npath = Path(sys.argv[1]).resolve()\nswitch = float(sys.argv[2])\nif switch <= 0 or time.time() < switch + 86400:\n    raise SystemExit(\"pending: require an actual hosted switch epoch at least 24h ago\")\nconn = sqlite3.connect(path.as_uri() + \"?mode=ro\", uri=True, timeout=5)\nconn.execute(\"PRAGMA query_only=ON\")\ndeadline = time.monotonic() + 15\nconn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)\nconn.execute(\"BEGIN\")\ndef measure(start):\n    params = (start, start + 86400)\n    rows, sources, payload_bytes = conn.execute(\"SELECT count(*), count(DISTINCT source_id), coalesce(sum(length(CAST(payload_json AS BLOB))),0) FROM distillation_source_versions WHERE source_id LIKE 'collector:collector-news-rss:%' AND committed_at >= ? AND committed_at < ?\", params).fetchone()\n    closures = conn.execute(\"SELECT count(*) FROM distillation_outbox WHERE source_id LIKE 'collector:collector-news-rss:%' AND skip_reason LIKE 'superseded_by_newer_version:%' AND processed_at >= ? AND processed_at < ?\", params).fetchone()[0]\n    return dict(start_epoch=start, end_epoch=start+86400, version_rows_per_day=rows, distinct_sources=sources, versions_per_source=rows/sources if sources else None, payload_bytes_per_day=payload_bytes, payload_MB_per_day=payload_bytes/1000000, superseded_closures_per_day=closures)\nbefore, after = measure(switch-86400), measure(switch)\npassed = bool(after['distinct_sources'] and after['versions_per_source'] <= 1.2 and (after['superseded_closures_per_day'] < before['superseded_closures_per_day'] if before['superseded_closures_per_day'] else after['superseded_closures_per_day'] == 0))\nprint(json.dumps(dict(before=before, after=after, passed=passed), sort_keys=True))\nconn.close()\nraise SystemExit(0 if passed else 1)\n",
+    "limits": "One manual read-only invocation; 15-second SQLite VM budget, 5-second connection busy timeout. Reads only two 24h windows in one snapshot, emits bounded JSON to stdout, no DB mutations or recurring writer. Exit 0 requires nonempty after cohort, <=1.2 new versions/source and fewer superseded closures (or both zero). Report before/after rows/day and decimal payload MB/day; disk file size may retain freed pages.",
+    "result": null
+  },
+  "handoff": {
+    "to_reviewer": "Antigravity: exact-head source review required; supervisor integrator alone merges. Hosted acceptance remains pending after source review/merge.",
+    "to_cb4f6795": "Coordinator: relay to cb4f6795. The open version-difference measurement is resolved: 301/301 pairs unchanged in title/body; collector run fields caused the digest churn. No producer suppression of unchanged items is needed to fix this identity cause. Producer/transport retention work remains in its own domain.",
+    "residual_findings": [
+      "Existing prune retains source-version/outbox tombstones indefinitely; older register wording that rows are removed after 7 days is inaccurate. No hard row cap is introduced here; coordinator should attach this storage residual to RC3 before closing the chain.",
+      "A pre-repair digest whose payload was already compacted to PRUNED_PAYLOAD_JSON cannot be compared to a later refetch because its content projection is gone. Such a source can acquire one repaired identity on its next observation. Existing input-answer reuse/per-source call budgets still apply; this patch cannot reconstruct lost snapshots or guarantee earliest PIT from already-pruned historical rows. Coordinator must disposition under RC2/RC3; retained snapshots and post-repair tombstones are covered.",
+      "24h hosted row ratio, superseded closure decline and before/after news MB/day are still pending deployment and observation."
+    ],
+    "composition": "BFF-ALPHA-BOARD-LLM-DISTINCT-SOURCES-20261127 source plumbing is now in merged dev; its hosted numeric distinct_sources/calls_per_source proof remains pending. Preserve that independent task's ownership and acceptance."
+  },
+  "conflict_repair": {
+    "reason": "Auto-integrator returned PR #7996 for a real conflict with dev; previous exact-head approval is invalid for this new delivery.",
+    "previous_head": "d9f3c3cdec513ae1e2669486aa9fa2d4ecbd7918",
+    "merged_dev": "60584b301fd09f2bd0dab6ce2f8385cd2d54296c",
+    "resolution": "Only docs/operations/problem-register.md conflicted. Preserve upstream BFF-ALPHA-BOARD-LLM-DISTINCT-SOURCES-20261127 ledger-to-board plumbing together with this task's identity root cause, resolved measurement, first-seen PIT, historical digest compatibility and storage residuals. No product code changed during conflict resolution.",
+    "verification": {
+      "command": "timeout 240 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_discovery_summary.py",
+      "result": "413 passed, 5 skipped, 3 warnings in 148.92s; terminal exit 0. Skipped cases are not counted as passed. No failures.",
+      "environment": "Original .venv-pantheon/bin/python3 did not exist in this worker worktree (launch exit 127, not a test pass); rerun used existing /tmp/agvenv with pytest, FastAPI, httpx, jsonschema and cryptography.",
+      "checks": "git diff --check origin/dev: exit 0; current dev is an ancestor of merge head; diff_budget before final evidence update exit 0 (production +44/-4, test +177/-2, docs/evidence +84/-2).",
+      "scope": "Production/test files identical to previously reviewed task head; only register conflict composition and evidence changed."
+    }
+  }
+}
