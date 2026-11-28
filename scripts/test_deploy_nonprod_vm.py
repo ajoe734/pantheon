@@ -4705,7 +4705,7 @@ docker() {{
     "ps -a -q --filter label=com.docker.compose.project=pantheon --filter label=com.docker.compose.service="*)
       case "$*" in
         *"status=created"*) : ;;
-        *"service=source-ingest "*|*"service=source-ingest") echo cid-src ;;
+        *"service=source-ingest "*|*"service=source-ingest") echo cid-src; [[ -z "${{FAKE_EXTRA_SOURCE_INGEST:-}}" ]] || echo cid-src-2 ;;
         *) : ;;
       esac ;;
     "rm -f 62f4371e62ff") : > "$STATE/created" ;;
@@ -4793,7 +4793,7 @@ verify_source_ingest_container_counts; echo "VERIFY=$?"
 def _steady_check_run(tmp_path: Path, *, running: bool, mode: str = "collector_steady_pull") -> tuple[subprocess.CompletedProcess[str], list[str], dict]:
     fns = "\n".join(
         _prune_shell_function(n)
-        for n in ("remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts", "execute_steady_posture_check")
+        for n in ("remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts", "steady_posture_problem", "execute_steady_posture_check")
     )
     calls = tmp_path / "calls"
     out = tmp_path / "steady.json"
@@ -6403,7 +6403,8 @@ def _steady_harness(tmp_path: Path, body: str, *, health_script: str = "echo hea
         for n in (
             "remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts",
             "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans",
-            "steady_check_cleanup_call_files", "steady_check_health_bound_seconds", "execute_steady_posture_check",
+            "steady_check_cleanup_call_files", "steady_check_health_bound_seconds", "steady_posture_problem",
+            "execute_steady_posture_check",
         )
     )
     calls = tmp_path / "calls"
@@ -6556,8 +6557,8 @@ _RUN_FUNCTIONS = (
     "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans", "steady_check_cleanup_call_files",
     "steady_check_health_bound_seconds", "bounded_runtime_state_dir", "bounded_runtime_list_state_dirs",
     "bounded_runtime_state_set", "bounded_runtime_record_memory", "bounded_runtime_market_open_guard",
-    "bounded_runtime_validate_profile", "bounded_runtime_restore_from_state", "bounded_runtime_restore_all_states",
-    "execute_steady_posture_check", "run_finmind_broker_whole_market", "execute_bounded_source_refresh_entrypoint",
+    "bounded_runtime_validate_profile", "bounded_runtime_retire_if_not_in_place", "bounded_runtime_restore_from_state",
+    "bounded_runtime_restore_all_states", "steady_posture_problem", "execute_steady_posture_check", "run_finmind_broker_whole_market", "execute_bounded_source_refresh_entrypoint",
 )
 
 
@@ -6642,12 +6643,13 @@ docker() {{
     "inspect --format {{{{.State.OOMKilled}}}} cid-src") echo {'true' if self.oom else 'false'} ;;
     "exec cid-src cat /sys/fs/cgroup/memory.peak") echo {self.peak} ;;
     "inspect --format {{{{json .Config.Env}}}} cid-src") echo '["A=1"]' ;;
-    "inspect --format {{{{.State.Status}}}} "*) echo exited ;;
-    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) : ;;
+    "image inspect "*) grep -qxF -- "${{@: -1}}" "{self.dir / 'missing_images'}" 2>/dev/null && return 1 ;;
+    "inspect --format {{{{.State.Status}}}} "*) grep -qxF -- "${{@: -1}}" "{self.dir / 'gone_containers'}" 2>/dev/null && return 1; echo exited ;;
+    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) cat "{self.dir / 'bounded_containers'}" 2>/dev/null ;;
     "ps -a -q --filter label=com.docker.compose.project=pantheon"*)
       case "$*" in
         *"status=created"*) cat "$CREATED" ;;
-        *"service=source-ingest "*|*"service=source-ingest") echo cid-src ;;
+        *"service=source-ingest "*|*"service=source-ingest") echo cid-src; [[ -z "${{FAKE_EXTRA_SOURCE_INGEST:-}}" ]] || echo cid-src-2 ;;
         *) : ;;
       esac ;;
     "rm -f "*) : ;;
@@ -6956,6 +6958,112 @@ def test_next_run_restores_the_bounded_runtime_a_dead_run_left_before_recording_
     assert outcome["status"] == "completed", (outcome, proc.stderr[-400:])
     assert [e.split()[0] for e in host.event_lines()] == ["bounded", "restore", "bounded"], host.event_lines()
     assert sorted(p.name for p in host.state_root.glob("pantheon-bounded-runtime-*")) == ["pantheon-bounded-runtime-9002"]
+
+
+# --- TW-REFRESH-STALE-BOUNDED-RUNTIME-RECORD-BLOCKS-REFRESH-20261127: stale records are retired, not restored ---
+
+_SHA_OLD = "sha256:" + "0" * 64
+
+
+def _write_stale_record(host: _BoundedRuntimeHost, run_id: str, *, phase: str, enter_count: int, image: str,
+                        steady_ids: str = "old-sched old-proj") -> Path:
+    record = host.state_root / f"pantheon-bounded-runtime-{run_id}"
+    record.mkdir()
+    (record / "pre_env.json").write_text('["A=1"]\n', encoding="utf-8")
+    (record / "state.env").write_text(
+        f"BR_PHASE={phase}\nBR_IMAGE_ID={image}\nBR_STEADY_IDS='{steady_ids}'\nBR_CONTROLLER_MODE=collector_steady_pull\n"
+        f"BR_LEASE_SECONDS=120\nBR_HOSTS={host.union}\nBR_FINMIND=true\nBR_ENTER_COUNT={enter_count}\n",
+        encoding="utf-8",
+    )
+    return record
+
+
+def test_never_entered_record_of_a_dead_run_on_an_older_release_is_retired_and_the_refresh_proceeds(tmp_path: Path) -> None:
+    # Replay of run 45985422058: captured, never entered, its image three releases old and gone, its steady
+    # containers gone, a healthy newer source-ingest running. Every later refresh used to fail on it.
+    host = _BoundedRuntimeHost(tmp_path, run_id="46075700478")
+    record = _write_stale_record(host, "45985422058", phase="captured", enter_count=0, image=_SHA_OLD)
+    (tmp_path / "missing_images").write_text(_SHA_OLD + "\n", encoding="utf-8")
+    (tmp_path / "gone_containers").write_text("old-sched\nold-proj\n", encoding="utf-8")
+    retired_log = host.state_root / "pantheon-bounded-runtime-retired.log"
+    retired_log.write_text("".join(f"old receipt {i}\n" for i in range(5)), encoding="utf-8")
+    proc, outcome = host.run_profile(0, *_FULL_RUN_PROFILES[2], extra_env={"BOUNDED_RUNTIME_RETIRED_LOG_LINES": "3"})
+    assert outcome["status"] == "completed", (outcome, proc.stdout[-800:], proc.stderr[-800:])
+    assert "bounded_runtime_stale_restore_failed" not in proc.stdout + proc.stderr
+    # Nothing of the dead record was restored: the only recreate is this run's own bounded runtime.
+    assert [e.split()[0] for e in host.event_lines()] == ["bounded"], host.event_lines()
+    assert "docker start old-sched old-proj" not in host.docker_calls()
+    receipt = (f"bounded runtime record retired: run=45985422058 phase=captured enter_count=0 reason=never_entered "
+               f"recorded_image={_SHA_OLD} current_image={_SHA_A}")
+    assert receipt in proc.stdout, proc.stdout
+    assert not record.exists()
+    assert sorted(p.name for p in host.state_root.glob("pantheon-bounded-runtime-[0-9]*")) == ["pantheon-bounded-runtime-46075700478"]
+    # The receipt log keeps a bounded tail and does not match the record glob.
+    lines = retired_log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3 and lines[:2] == ["old receipt 3", "old receipt 4"] and receipt in lines[2], lines
+    # The run's own steady check restores its own bounded runtime once, as before.
+    _, steady = host.steady_check()
+    assert steady["status"] == "healthy" and steady["reason"] == "bounded_runtime_restored_once", steady
+    assert [e.split()[0] for e in host.event_lines()] == ["bounded", "restore"]
+
+
+def test_entered_record_superseded_by_a_later_release_is_retired_by_the_steady_check(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_OLD)
+    proc, steady = host.steady_check()
+    assert steady["status"] == "healthy" and steady["reason"] == "bounded_runtime_record_retired", (steady, proc.stdout)
+    assert host.event_lines() == [], "the recorded (older) image is never restored"
+    assert "docker start old-sched old-proj" not in host.docker_calls()
+    assert "reason=superseded_by_release" in proc.stdout and f"recorded_image={_SHA_OLD} current_image={_SHA_A}" in proc.stdout
+    assert not record.exists()
+
+
+def test_never_entered_record_with_an_unhealthy_steady_posture_is_restored_as_recorded(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="captured", enter_count=0, image=_SHA_A, steady_ids="steady-sched steady-proj")
+    host.mode_file.write_text("bounded\n", encoding="utf-8")   # the dead run had already stopped the steady controller
+    proc, steady = host.steady_check()
+    assert "not healthy (source-ingest-scheduler_not_running); restoring it as recorded" in proc.stdout, proc.stdout
+    assert [e.split()[0] for e in host.event_lines()] == ["restore"]
+    assert "docker start steady-sched steady-proj" in host.docker_calls()
+    assert steady["status"] == "healthy" and steady["reason"] == "bounded_runtime_restored_once", steady
+    assert not record.exists()
+
+
+def test_entered_record_with_its_bounded_runtime_in_place_restores_as_before(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A, steady_ids="steady-sched steady-proj")
+    (tmp_path / "bounded_containers").write_text("bx1\n", encoding="utf-8")
+    host.mode_file.write_text("bounded\n", encoding="utf-8")
+    proc, outcome = host.run_profile(0, *_FULL_RUN_PROFILES[2])
+    (tmp_path / "bounded_containers").write_text("", encoding="utf-8")
+    assert outcome["status"] == "completed", (outcome, proc.stderr[-800:])
+    assert [e.split()[0] for e in host.event_lines()] == ["restore", "bounded"], host.event_lines()
+    calls = host.docker_calls()
+    assert "docker rm -f bx1" in calls and "docker start steady-sched steady-proj" in calls
+    assert "record retired" not in proc.stdout
+    assert not record.exists()
+
+
+@pytest.mark.parametrize("failure,part", [("image", "recorded_image_missing"), ("counts", "container_counts")])
+def test_genuine_stale_restore_failure_keeps_the_record_and_names_the_failing_part(tmp_path: Path, failure: str, part: str) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A, steady_ids="steady-sched steady-proj")
+    (tmp_path / "bounded_containers").write_text("bx1\n", encoding="utf-8")
+    if failure == "image":
+        (tmp_path / "missing_images").write_text(_SHA_A + "\n", encoding="utf-8")
+    else:
+        # A second source-ingest container stays behind: the count check fails.
+        host.created_file.write_text("", encoding="utf-8")
+    extra = {} if failure == "image" else {"FAKE_EXTRA_SOURCE_INGEST": "1"}
+    proc, outcome = host.run_profile(0, *_FULL_RUN_PROFILES[2], extra_env=extra)
+    text = proc.stdout + proc.stderr
+    assert f"bounded_runtime_stale_restore_failed: run_9001:{part}" in text, text[-1500:]
+    assert outcome.get("status") == "failed" and part in outcome.get("reason", ""), outcome
+    assert record.exists() and (record / "state.env").exists(), "a failed restore keeps the record"
+    assert "record retired" not in proc.stdout
+    if failure == "image":
+        assert not any(e.startswith("restore") for e in host.event_lines()), "a missing image is never recreated"
 
 
 def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call() -> None:
