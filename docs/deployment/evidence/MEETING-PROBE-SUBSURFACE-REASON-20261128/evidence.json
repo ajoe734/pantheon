@@ -32,7 +32,7 @@
     "tests": {
       "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q acceptance/test_meeting_review_disposition.py",
       "exit_code": 0,
-      "result": "18 passed, 1 warning in 4.39s",
+      "result": "18 passed, 1 warning in 4.37s (refreshed after merging dev 5e08fd1f6e73ae6a66d698531fe5fc3a06a1a10f)",
       "warning": "Dependency StarletteDeprecationWarning: httpx TestClient integration is deprecated; no test failures."
     },
     "whitespace": {"command": "git diff --check", "exit_code": 0},
@@ -62,6 +62,28 @@
     "owner": "Operator acceptance task after deployment",
     "reason": "Task explicitly prohibits VM/SSH/key access and requests functional evidence only. Local fixtures do not prove a deployed or accepted release."
   },
-  "residual_findings": [],
+  "review_return": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/8005",
+    "previous_reviewed_head": "78d48e71372ccb8a40898de3f1182b296c00082e",
+    "failed_check": "Smoke acceptance",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/46093084267/job/140819129096",
+    "observed_failure": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_real_signal_injection: guard_proc.communicate(timeout=10) raised TimeoutExpired after SIGTERM; guard stderr reported trap: line 2: unexpected EOF while looking for matching `)'. Suite result: 1 failed, 27 passed in 35.55s.",
+    "scope_assessment": "The failed test exercises the existing lease guard and baseline diagnostics subprocess cancellation. Neither these scripts nor that test is changed by this task. No causal link to meeting probe formatting is established.",
+    "local_diagnostics_retry": {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "result": "28 passed in 34.87s",
+      "interpretation": "The entire unmodified failing suite passes locally after syncing dev; one retry does not prove the CI-only signal cancellation failure cannot recur."
+    },
+    "refresh": "Merged current dev 5e08fd1f6e73ae6a66d698531fe5fc3a06a1a10f without rewriting the published branch; renewed delivery requires fresh exact-head CI and Antigravity review. No existing assertion was changed or skipped."
+  },
+  "residual_findings": [
+    {
+      "root_cause_class": "RC1 required-check reliability / release CI chain",
+      "finding": "Existing lease-guard signal cancellation test failed in PR #8005 CI with a shell trap parse error and 10-second timeout.",
+      "evidence": "https://github.com/ajoe734/pantheon/actions/runs/46093084267/job/140819129096",
+      "disposition": "Retain as an outside-scope residual for the RC1 release CI coordinator to attach to the existing required-check class; no lease-guard repair, timeout increase, test weakening or new task is introduced here. A local retry does not establish that the CI defect is repaired."
+    }
+  ],
   "review": {"status": "pending_independent_review", "assigned_reviewer": "Antigravity"}
 }
