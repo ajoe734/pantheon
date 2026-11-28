@@ -564,8 +564,12 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
 ) -> None:
     from services.source_ingestion.daily_bars_store import keyed_dataset_store
 
-    # 1. Start inside the Taiwan weekday market-open window (Wednesday 00:40Z; last allowed start is 00:34Z).
-    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:40:00Z")
+    # Use the production defaults: 900s profile + 600s cold-start restore reserve.
+    monkeypatch.delenv("PANTHEON_REFRESH_PROFILE_BUDGET_SECONDS", raising=False)
+    monkeypatch.delenv("PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS", raising=False)
+
+    # 1. The default guard starts at 00:30Z; no session may start at the boundary.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:30:00Z")
     f_inside = FakeFetcher()
     inside = run_backfill(
         output_dir=tmp_path / "inside",
@@ -579,14 +583,14 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
     assert "market_open_0055z" in (inside.reason or "") and "00:55Z" in (inside.reason or "")
     assert inside.requests_made == 0 and f_inside.calls == []
 
-    # 2. Start outside the window (Wednesday 00:34Z) and reach 00:35Z between session 1 and session 2.
-    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:34:00Z")
+    # 2. Start outside the window (Wednesday 00:29Z) and reach 00:30Z between session 1 and session 2.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:29:00Z")
     clock_now = [0.0]
 
     class AdvancingFetcher(FakeFetcher):
         def fetch_storage_objects_raw(self, dataset, day_s):
             out = super().fetch_storage_objects_raw(dataset, day_s)
-            # After session 1 finishes, 60 seconds have elapsed -> 00:35Z (inside the guard window).
+            # After session 1 finishes, 60 seconds have elapsed -> 00:30Z (inside the guard window).
             clock_now[0] += 60.0
             return out
 
@@ -609,9 +613,9 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
     store = keyed_dataset_store(between_dir, "tw_broker_top")
     assert store is not None and store.partitions() == ["2026-06-08"]
 
-    # 3. Crossing 00:35Z during throttle sleep (start 00:34:59Z, default min_interval_seconds=1.5):
-    # wait is bounded to 1.0s (00:35:00Z), guard is rechecked after waiting and before fetching, so session 2 is not fetched.
-    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:34:59Z")
+    # 3. Crossing 00:30Z during throttle sleep (start 00:29:59Z, default min_interval_seconds=1.5):
+    # wait is bounded to 1.0s (00:30:00Z), guard is rechecked after waiting and before fetching, so session 2 is not fetched.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:29:59Z")
     sleep_clock, sleeps_crossing, f_sleep_cross = [0.0], [], FakeFetcher()
     sleep_cross = run_backfill(
         output_dir=tmp_path / "sleep_cross", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_sleep_cross,
@@ -624,9 +628,9 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
     assert sleep_cross.requests_made == 1 and f_sleep_cross.calls == ["2026-06-08"]
     assert sleeps_crossing == [pytest.approx(1.0)] and sleep_clock[0] == pytest.approx(1.0)
 
-    # 4. Long throttle interval (min_interval_seconds=1560, max_wall_seconds=60) starting at 00:34:00Z:
-    # wait is bounded to 60s (00:35:00Z), never sleeping to 01:00Z (1560s), and session 2 is not fetched.
-    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:34:00Z")
+    # 4. Long throttle interval (min_interval_seconds=1560, max_wall_seconds=60) starting at 00:29:00Z:
+    # wait is bounded to 60s (00:30:00Z), never sleeping to 00:55Z (1560s), and session 2 is not fetched.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:29:00Z")
     long_clock, sleeps_long, f_long = [0.0], [], FakeFetcher()
     long_res = run_backfill(
         output_dir=tmp_path / "long_wait", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_long,
@@ -639,7 +643,7 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
     assert long_res.requests_made == 1 and f_long.calls == ["2026-06-08"]
     assert sleeps_long == [pytest.approx(60.0)] and long_clock[0] == pytest.approx(60.0)
 
-    # 5. Wall deadline tighter than market deadline during throttle sleep (max_wall_seconds=30 at 00:34:00Z).
+    # 5. Wall deadline tighter than market deadline during throttle sleep (max_wall_seconds=30 at 00:29:00Z).
     wall_clock, sleeps_wall, f_wall = [0.0], [], FakeFetcher()
     wall_res = run_backfill(
         output_dir=tmp_path / "wall_bound", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_wall,
