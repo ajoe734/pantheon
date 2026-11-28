@@ -4,7 +4,7 @@
   "reviewer": "Antigravity",
   "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
   "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
-  "source_base": "b77004dae7dba93c53179ec9e1b477ce311b7968",
+  "source_base": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
   "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
   "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
   "incident": {
@@ -83,6 +83,17 @@
       "command": "python3 scripts/ci_test_inventory.py check && git diff --check",
       "exit_code": 0,
       "result": "test inventory ok; no whitespace errors after CI repair."
+    },
+    {
+      "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py",
+      "exit_code": 0,
+      "result": "141 passed, 1 skipped, 3 warnings in 54.19s on merge anchor 27e10718f; terminal output collected.",
+      "skip_reason": "RANKING_TEST_DSN is not set; live PostgreSQL strategy-list latency test skipped."
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check; git diff --check",
+      "exit_code": 0,
+      "result": "test inventory ok; no whitespace errors after dev sync."
     }
   ],
   "reader_inventory": {
@@ -128,6 +139,27 @@
     "acceptance_scope": "Acceptance 6: regression readers remain compatible; no runtime source change or additional owner reads.",
     "review": "Previous approval does not apply to the new head. Fresh Antigravity exact-head review required.",
     "repair_anchor": "c19fb1779cf8df2e97a33e4b99d55cb19de07778",
-    "validation_summary": "Original readers: 123 passed, 1 skipped. Overlap: 18 passed. Shard batch: 64 files passed and 1 timed out under a locally shortened 60s limit, so the batch is not passed. That remaining file passed separately: 133 passed in 81.29s under a 180s bound. All 65 shard files have passing terminal results across the two batches; hosted CI with its normal 300s/file limit remains pending on the new head."
+    "validation_summary": "Original readers: 123 passed, 1 skipped. Overlap: 18 passed. Shard batch: 64 files passed and 1 timed out under a locally shortened 60s limit, so the batch is not passed. That remaining file passed separately: 133 passed in 81.29s under a 180s bound. All 65 shard files have passing terminal results across the two batches; hosted CI with its normal 300s/file limit remains pending on the new head.",
+    "verified_github_ci": {
+      "head": "1a140b6a0e0a13ec28d218dc09e67d1be0d6c4af",
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/46096259473",
+      "job": "https://github.com/ajoe734/pantheon/actions/runs/46096259473/job/140828752435",
+      "command": "gh api repos/ajoe734/pantheon/actions/jobs/140828752435/logs",
+      "exit_code": 0,
+      "raw_log_results": [
+        "test_strategy_list_overlap_reads.py: 18 passed, 3 warnings in 5.93s",
+        "test_strategy_list_test_scope.py: 14 passed, 3 warnings in 3.42s",
+        "test_bff_approvals_decide_contract.py: 133 passed, 1 warning in 80.12s",
+        "shard 4/12: 65 passed, 0 failed, wall 114s"
+      ],
+      "scope": "Verified directly from raw job output on resume, not inherited self-report. These results apply to repaired head 1a140b6a0; they do not claim post-dev-sync CI has passed."
+    }
+  },
+  "resume_validation": {
+    "merge_anchor": "27e10718f172ab246e0dd1b61fbcfe8fb5530a08",
+    "base": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+    "register_resolution": "Preserve current dev hosted and task records; add PR #8006 fresh-review status, unchanged boundaries and task evidence reference.",
+    "review": "Fresh Antigravity review must bind the newly published exact head; all previous-head approvals are stale.",
+    "hosted": "Still pending deployment and next Root probe; no hosted completion claimed."
   }
 }
