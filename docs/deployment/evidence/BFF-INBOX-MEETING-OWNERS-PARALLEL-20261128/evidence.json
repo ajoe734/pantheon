@@ -1,0 +1,85 @@
+{
+  "task_id": "BFF-INBOX-MEETING-OWNERS-PARALLEL-20261128",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "root_cause_class": "RC1 WP1.2 inbox owner reads",
+  "delivery_state": "implementation; source review and merge pending; hosted acceptance pending",
+  "baseline": {
+    "source_commit": "292379ab4c1cb0899e40585b13c96a6f6a38242d",
+    "events": [
+      {
+        "owner": "consultation",
+        "path": "/api/consult/meetings",
+        "start_seconds": 0.028965858044102788,
+        "deadline_seconds": 0.42808875802438706,
+        "socket_timeout_seconds": 0.3995166700333357,
+        "end_seconds": 0.20920749206561595
+      },
+      {
+        "owner": "consultation",
+        "path": "/api/consult/meetings/proposals",
+        "start_seconds": 0.02948881802149117,
+        "deadline_seconds": 0.42808875802438706,
+        "socket_timeout_seconds": 0.39866104000248015,
+        "end_seconds": 0.20961072202771902
+      },
+      {
+        "owner": "consultation",
+        "path": "/api/consult/meetings/catalogue",
+        "start_seconds": 0.029785288032144308,
+        "deadline_seconds": 0.42808875802438706,
+        "socket_timeout_seconds": 0.3983453100081533,
+        "end_seconds": 0.20992876205127686
+      },
+      {
+        "owner": "research",
+        "path": "/api/research/tickets",
+        "start_seconds": 0.21075921203009784,
+        "deadline_seconds": 0.6104128620354459,
+        "socket_timeout_seconds": 0.39967397996224463,
+        "end_seconds": 0.39101421600207686
+      }
+    ],
+    "inbox_seconds": 0.3972926359856501,
+    "kind": "in-process slow HTTP fakes with incident meeting and existing Research ticket fixture"
+  },
+  "implementation": {
+    "owner_deadline": "One absolute deadline computed before either owner starts: min(parent deadline, start + 0.8 * human_inbox_surface_timeout_seconds()).",
+    "parallelism": "Submit Research first using submit_owner_read (copied caller context), then execute the existing concurrent consultation reads. Both use that absolute deadline.",
+    "collection": "Research and consultation waits are bounded by the remaining common deadline. Late results stay in their futures and never modify the response.",
+    "unchanged_boundaries": [
+      "Other inbox contributors and their caps",
+      "Consultation and Research services",
+      "Acceptance probe and problem register",
+      "Owner authorization, tenant checks, private evidence filtering and pagination"
+    ]
+  },
+  "runtime_budget": {
+    "cadence": "On demand, one meetings contributor per admitted human inbox request; no recurring job.",
+    "hosted_scale": "The existing global inbox admission permits four concurrent requests per BFF process. Each uses up to three consultation GETs and one Research GET.",
+    "threads": "Existing consultation pool: 12 workers and 12 nonblocking slots. Added shared Research pool: 4 workers and 4 nonblocking slots per BFF process; no executor per request and no unbounded pending queue.",
+    "count_cap": "At most 16 in-flight owner reads per BFF process (12 consultation, 4 Research), including late transports. Slots release only when their future finishes or is cancelled.",
+    "size": "Existing pages remain capped at 100 meetings and 100 Research tickets; existing Research response limit remains 4 MiB. No new persisted payload.",
+    "growth_per_day": "0 persistent bytes, files, rows or jobs; fixed pools reuse threads.",
+    "cleanup": "Request futures/results are released after collection; late futures only hold their own data until completion. Slots release via done callbacks. Shared pool threads end with the BFF process.",
+    "writers": "No new persistent writer, cache, workflow input or job. This fixed task evidence file is source documentation only."
+  },
+  "assertion_changes": [
+    "Socket timeout and remaining-budget bounds increase 0.4 -> 0.8 because both owners share the former two sequential 40% phases.",
+    "The consultation late fake increases 0.5 -> 0.9 seconds so it still exceeds the owner deadline; response bound increases 0.48 -> 0.88 seconds and stays below the unchanged 1.0 second surface cap.",
+    "Surface-cap parametrization is retained; expected owner fraction increases 0.4 -> 0.8 and the test name describes the new shared phases.",
+    "The existing 30-read consultation test keeps its 0.4 second elapsed assertion and its three-party barrier. No existing test removed or disabled."
+  ],
+  "validation": {
+    "status": "running; anchor checkpoint"
+  },
+  "hosted_acceptance": {
+    "status": "pending operator acceptance; no VM or SSH access performed",
+    "required": [
+      "60 sequential hosted meeting inbox reads with both owner sub-surfaces ok",
+      "probe:meeting-review-disposition on the first two post-deploy Roots"
+    ],
+    "claims": "Local fake HTTP timing and regression tests are functional evidence only; they do not establish deployed or accepted delivery."
+  },
+  "residual_findings": []
+}

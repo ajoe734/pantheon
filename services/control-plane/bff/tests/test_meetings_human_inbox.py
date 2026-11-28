@@ -15,7 +15,7 @@ import statistics
 import time
 from typing import Any, Dict, List
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -406,12 +406,12 @@ def test_three_owner_reads_share_one_allowance_concurrently(budget_stack, monkey
         assert req.get_header("X-pantheon-tenant-id") == "tenant-a"
         assert req.get_header("Authorization") == f"Bearer {SERVICE_TOKEN}"
         assert req.get_header("X-pantheon-service-actor") == "bff:human-inbox"
-        assert 0 < timeout <= 0.4
-        assert 0 < remaining_management_read_budget() <= 0.4
+        assert 0 < timeout <= 0.8
+        assert 0 < remaining_management_read_budget() <= 0.8
         calls.append(req.full_url)
         started = time.monotonic()
         barrier.wait(timeout=0.2)
-        time.sleep(0.18)  # Serial total is 0.54 s, exceeding the 0.4 s allowance.
+        time.sleep(0.18)  # Barrier proves concurrency with the larger allowance too.
         response = transport(req, timeout=timeout)
         latencies[urlsplit(req.full_url).path].append(time.monotonic() - started)
         return response
@@ -467,7 +467,7 @@ def test_each_timeout_names_read_and_retains_successful_items(
                     raise URLError(TimeoutError("timed out"))
                 # Deliberately ignore the socket timeout to prove collection is
                 # bounded independently, even if a transport returns too late.
-                time.sleep(0.5)
+                time.sleep(0.9)  # Exceeds the new shared 0.8 s owner deadline.
             finally:
                 completed.set()
         return transport(req, timeout=timeout)
@@ -479,7 +479,7 @@ def test_each_timeout_names_read_and_retains_successful_items(
     # Collect the deliberately late mock before monkeypatch teardown.
     assert completed.wait(timeout=1)
     assert response.status_code == 200, response.text
-    assert elapsed < 0.48
+    assert elapsed < 0.88
     surface = _consultation_surface(response.json())
     assert surface["status"] == "degraded", surface
     assert surface["reason"] == f"read_timeout:{read_name}"
@@ -531,11 +531,11 @@ def test_exhausted_parent_budget_names_all_three_reads(budget_stack):
 
 
 @pytest.mark.parametrize("configured,expected", [("10", 1.0), ("1.1", 1.0), ("0.5", 0.5)])
-def test_surface_cap_and_owner_fraction_are_unchanged(monkeypatch, configured, expected):
+def test_surface_cap_unchanged_and_parallel_owners_share_former_phases(monkeypatch, configured, expected):
     monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", configured)
     assert human_inbox_surface_timeout_seconds() == expected
     with meetings_client._inbox_owner_budget():
-        assert 0 < remaining_management_read_budget() <= expected * 0.4
+        assert 0 < remaining_management_read_budget() <= expected * 0.8
 
 
 def test_consultation_capacity_is_bounded_and_reported(budget_stack, monkeypatch):
@@ -588,3 +588,176 @@ def test_owner_pagination_remains_degraded_and_preserves_available_items(budget_
     assert surface["next_cursor"] == "next-owner-page"
     assert any(item["id"] == "meeting_review:mtg-2c016da5651a0dc4"
                for item in response.json()["data"]["items"])
+
+
+@pytest.fixture
+def parallel_owners_stack(budget_stack, monkeypatch):
+    import urllib.request
+    # Reuse the full owner-contract ticket (meeting_action, input_request,
+    # revision and lifecycle fields), alongside the actual incident meeting.
+    from services.control_plane.bff.tests.test_meeting_action_human_response import ticket
+
+    client, service, state = budget_stack
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.test")
+    transport = urllib.request.urlopen
+    controls = {"consultation_delay": 0.01, "research_delay": 0.01,
+                "events": [], "barrier": None, "research_status": 200,
+                "research_next_page": None}
+
+    def delayed(req, timeout):
+        url = urlsplit(req.full_url)
+        owner = "research" if url.hostname == "research.test" else "consultation"
+        if owner == "research":
+            assert url.path == "/api/research/tickets"
+            assert parse_qs(url.query) == {"meeting_linked": ["true"],
+                                          "human_actionable": ["true"], "page_size": ["100"]}
+            assert req.get_header("Authorization") == _auth_headers()["Authorization"]
+            assert req.get_header("X-tenant-id") == "tenant-a"
+        else:
+            assert req.get_header("Authorization") == f"Bearer {SERVICE_TOKEN}"
+            assert req.get_header("X-pantheon-tenant-id") == "tenant-a"
+        event = {"owner": owner, "path": url.path, "start": time.monotonic(),
+                 "deadline": management_read_deadline.get(), "timeout": timeout,
+                 "finished": threading.Event()}
+        controls["events"].append(event)
+        try:
+            if controls["barrier"] is not None:
+                controls["barrier"].wait(timeout=0.3)
+            time.sleep(controls[f"{owner}_delay"])
+            if owner == "consultation":
+                return transport(req, timeout=timeout)
+            if controls["research_status"] != 200:
+                raise HTTPError(req.full_url, controls["research_status"], "Owner error", {},
+                                io.BytesIO(b'{"detail":"research owner error"}'))
+            response = io.BytesIO(json.dumps({"data": [ticket()], "page_info": {
+                "next_page_token": controls["research_next_page"]}}).encode())
+            response.status = 200
+            return response
+        finally:
+            event["end"] = time.monotonic()
+            event["finished"].set()
+
+    monkeypatch.setattr(urllib.request, "urlopen", delayed)
+    yield client, service, state, controls
+    # Every deliberately late fake is collected before monkeypatch teardown.
+    for event in controls["events"]:
+        assert event["finished"].wait(timeout=2)
+
+
+def _assert_owner_items(response, *, review=True, action=True):
+    ids = {item["id"] for item in response.json()["data"]["items"]}
+    assert ("meeting_review:mtg-2c016da5651a0dc4" in ids) is review
+    assert ("meeting_action:rt-action-" + "a" * 32 in ids) is action
+    assert "secret-private-inbox" not in response.text
+
+
+@pytest.mark.parametrize("slow_owner", ["consultation", "research"])
+def test_two_owners_start_together_with_identical_deadline(
+    parallel_owners_stack, slow_owner, record_property,
+):
+    client, _, _, controls = parallel_owners_stack
+    controls[f"{slow_owner}_delay"] = 0.18
+    # All three consultation GETs and Research must enter before any returns.
+    controls["barrier"] = threading.Barrier(4)
+    started = time.monotonic()
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    elapsed = time.monotonic() - started
+    assert response.status_code == 200, response.text
+    surface = response.json()["meta"]["surfaces"]["meetings"]
+    assert surface["status"] == "ok", surface
+    _assert_owner_items(response)
+    events = controls["events"]
+    assert len(events) == 4
+    assert len({e["deadline"] for e in events}) == 1
+    assert max(e["start"] for e in events) < min(e["end"] for e in events)
+    assert max(e["start"] for e in events) - min(e["start"] for e in events) < 0.1
+    for event in events:
+        assert 0.6 < event["timeout"] <= 0.8
+    assert elapsed < 0.4
+    record_property("parallel_owner_measurements_json", json.dumps({
+        "kind": "local simulated HTTP transport; not hosted evidence", "slow_owner": slow_owner,
+        "inbox_seconds": elapsed,
+        "events": [{k + "_seconds" if k in {"start", "end", "deadline"} else k:
+                    v - started if k in {"start", "end", "deadline"} else v
+                    for k, v in e.items() if k != "finished"} for e in events],
+    }))
+
+
+@pytest.mark.parametrize("configured", ["0.3", "0.6", "10"])
+def test_both_late_owners_finish_contributor_inside_surface_cap(
+    parallel_owners_stack, monkeypatch, configured,
+):
+    client, _, _, controls = parallel_owners_stack
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", configured)
+    cap = human_inbox_surface_timeout_seconds()
+    controls.update(consultation_delay=cap * 0.8 + 0.06, research_delay=cap * 0.8 + 0.06)
+    started = time.monotonic()
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    elapsed = time.monotonic() - started
+    assert response.status_code == 200, response.text
+    assert cap * 0.8 <= elapsed < cap
+    surface = response.json()["meta"]["surfaces"]["meetings"]
+    assert surface["surfaces"]["research"]["reason"] == "read_timeout:list_research_ticket_page"
+    assert {r["reason"] for r in surface["surfaces"]["consultation"]["reads"].values()} == {
+        f"read_timeout:{name}" for name in READ_PATHS}
+    assert len({e["deadline"] for e in controls["events"]}) == 1
+    _assert_owner_items(response, review=False, action=False)
+    # Late completions must not mutate the response snapshot.
+    snapshot = response.json()
+    for event in controls["events"]:
+        assert event["finished"].wait(timeout=2)
+    assert response.json() == snapshot
+
+
+@pytest.mark.parametrize("slow_owner", ["consultation", "research"])
+def test_one_late_owner_retains_other_owner_items(parallel_owners_stack, monkeypatch, slow_owner):
+    client, _, _, controls = parallel_owners_stack
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.4")
+    controls[f"{slow_owner}_delay"] = 0.38
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert response.status_code == 200, response.text
+    surface = response.json()["meta"]["surfaces"]["meetings"]
+    assert surface["status"] == "degraded", surface
+    fast_owner = "research" if slow_owner == "consultation" else "consultation"
+    assert surface["surfaces"][fast_owner]["status"] == "ok"
+    assert surface["surfaces"][slow_owner]["status"] == "unavailable"
+    _assert_owner_items(response, review=slow_owner != "consultation", action=slow_owner != "research")
+
+
+@pytest.mark.parametrize("research_status", [401, 403, 503])
+def test_research_error_keeps_consultation_review(parallel_owners_stack, research_status):
+    client, _, _, controls = parallel_owners_stack
+    controls["research_status"] = research_status
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert response.status_code == 200, response.text
+    research = response.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]
+    assert research["status"] == ("denied" if research_status in {401, 403} else "unavailable")
+    assert research["status_code"] == research_status
+    assert research["reason"] == "research owner error"
+    _assert_owner_items(response, action=False)
+
+
+def test_research_capacity_is_bounded_without_hiding_consultation(parallel_owners_stack, monkeypatch):
+    client, _, _, controls = parallel_owners_stack
+    slots = threading.BoundedSemaphore(1)
+    slots.acquire()
+    monkeypatch.setattr(meetings_client, "_INBOX_RESEARCH_SLOTS", slots)
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert response.status_code == 200, response.text
+    research = response.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]
+    assert research["reason"] == "owner_read_capacity_exhausted:list_research_ticket_page"
+    assert all(e["owner"] == "consultation" for e in controls["events"])
+    assert meetings_client._INBOX_RESEARCH_EXECUTOR._max_workers == 4
+    _assert_owner_items(response, action=False)
+
+
+def test_research_pagination_is_preserved(parallel_owners_stack):
+    client, _, _, controls = parallel_owners_stack
+    controls["research_next_page"] = "opaque-owner-next"
+    response = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert response.status_code == 200, response.text
+    research = response.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]
+    assert research["status"] == "degraded"
+    assert research["reason"] == "owner_page_has_more"
+    assert research["page_info"]["next_page_token"] == "opaque-owner-next"
+    _assert_owner_items(response)
